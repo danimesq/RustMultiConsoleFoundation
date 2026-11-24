@@ -5,14 +5,19 @@
 
 use std::error::Error;
 use std::fs;
+use std::io;
 use std::path::Path;
 
 /// Load a Cargo Packager configuration from a TOML file.
 pub fn load_config(path: impl AsRef<Path>) -> Result<cargo_packager::Config, Box<dyn Error>> {
     let path = path.as_ref();
     let source = fs::read_to_string(path)?;
-    let config = toml::from_str::<cargo_packager::Config>(&source)
-        .map_err(|error| format!("invalid packager configuration {}: {error}", path.display()))?;
+    let config = toml::from_str::<cargo_packager::Config>(&source).map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("invalid packager configuration {}: {error}", path.display()),
+        )
+    })?;
 
     Ok(config)
 }
