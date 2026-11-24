@@ -7,6 +7,6 @@ A foundation for exploring Rust-powered game development across classic consoles
 - [Byte-perfect ROM reconstruction and the C-to-Rust experiment](docs/byte-perfect-rom-reconstruction.md)
 - [Impossible Engine compiler architecture](docs/impossible-engine-architecture.md)
 
-The initial reverse-engineering case studies are **Pokémon FireRed/LeafGreen** and **Pokémon Emerald**. The goal is to understand the original C/assembly implementations, port their C portions to Rust, and investigate how closely the Rust implementation can reproduce the original executable bytes.
+The first byte-matching experiment is **Pokémon Red/Blue**: compare the mature pret/pokered disassembly against the Rust reimplementations open-pokered and pokerust. This is followed by an ambitious shared-source investigation linking Red and FireRed. FireRed/LeafGreen and Emerald remain major GBA case studies.
 
 This repository is currently a research and architecture foundation. The documents describe goals and experimental methodology, not completed ports or verified byte-perfect Rust builds.
