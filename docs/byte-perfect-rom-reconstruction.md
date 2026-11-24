@@ -160,7 +160,7 @@ The upstream README declares these English ROM outputs and SHA-1 values:
 | `pokefirered_rev1.gba` | `dd5945db9b930750cb39d00c84da8571feebf417` |
 | `pokeleafgreen_rev1.gba` | `7862c67bdecbe21d1d69ce082ce34327e1c6ed5e` |
 | `pokefirered_switch.gba` | `baa452d0b24629dd7782cfc07a8984085dde1311` |
-| `pokeleafgreen_switch.gba` | `[see upstream README]` |
+| `pokeleafgreen_switch.gba` | `62b9fc77549dbc67032eb6cbd0ea6ad3b825690f` |
 
 The project README is the authority for the current complete list and should be checked again when selecting a target revision.
 
