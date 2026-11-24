@@ -2,6 +2,26 @@
 
 A reusable Rust game-development foundation for exploring native, web, legacy desktop, and classic-console targets. The project focuses on shared game logic with target-specific runtimes, renderers, assets, and build pipelines.
 
+## 🌈 Packaging
+
+The Foundation includes a Rust packaging adapter powered by [Cargo Packager](https://github.com/crabnebula-dev/cargo-packager). It currently exposes a Foundation-owned CLI and a library API for reading TOML configuration and generating platform packages.
+
+### Windows NSIS installer
+
+1. Build the game executable for the intended Windows target.
+2. Copy `Packager.windows.example.toml` to `Packager.toml` in the game project.
+3. Set the product metadata, executable name, and paths in `Packager.toml`.
+4. Install the required platform packaging tools, including NSIS.
+5. From the game project root, run:
+
+```sh
+cargo run -p foundation-packaging -- --config Packager.toml
+```
+
+The generated installer is written to the configured `out-dir`. Cargo Packager does not compile the game automatically in this integration: the game build must finish before packaging begins.
+
+The adapter pins Cargo Packager to version `0.11.8` and disables its CLI feature because the Foundation calls its Rust library API directly. The external NSIS/WiX toolchain and target-specific requirements remain separate prerequisites.
+
 ## 🌈 Documentation
 
 - [Multi-console foundation: architecture and scope](docs/multi-console-foundation.md)
