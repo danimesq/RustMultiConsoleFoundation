@@ -5,6 +5,7 @@ A reusable Rust game-development foundation for exploring native, web, legacy de
 ## 🌈 Documentation
 
 - [Multi-console foundation: architecture and scope](docs/multi-console-foundation.md)
+- [Multi-backend platform abstraction and target-specific SDL selection](docs/multi-backend-platform-abstraction.md)
 - [Target platform and toolchain matrix](docs/target-platform-matrix.md)
 - [Asset pipeline and target capability profiles](docs/asset-and-capability-pipeline.md)
 - [Legacy Windows: Rust and SDL compatibility](docs/legacy-windows-sdl-rust.md)
