@@ -1,6 +1,7 @@
 //! Small CLI wrapper so games can use one Foundation-owned packaging command.
 
 use std::error::Error;
+use std::io;
 use std::path::PathBuf;
 
 fn main() {
@@ -21,14 +22,17 @@ fn run() -> Result<(), Box<dyn Error>> {
         }
 
         if argument == "--config" || argument == "-c" {
-            config = args
-                .next()
-                .map(PathBuf::from)
-                .ok_or("--config requires a file path")?;
+            config = args.next().map(PathBuf::from).ok_or_else(|| {
+                io::Error::new(io::ErrorKind::InvalidInput, "--config requires a file path")
+            })?;
             continue;
         }
 
-        return Err(format!("unknown argument: {}", argument.to_string_lossy()).into());
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("unknown argument: {}", argument.to_string_lossy()),
+        )
+        .into());
     }
 
     let count = foundation_packaging::package_from_file(&config)?;
