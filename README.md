@@ -1,12 +1,19 @@
 # RustMultiConsoleFoundation
 
-A foundation for exploring Rust-powered game development across classic consoles, including GBA, PS1, Nintendo DS, 3DS, and N64.
+A reusable Rust game-development foundation for exploring native, web, legacy desktop, and classic-console targets. The project focuses on shared game logic with target-specific runtimes, renderers, assets, and build pipelines.
 
-## Research directions
+## 🌈 Documentation
 
-- [Byte-perfect ROM reconstruction and the C-to-Rust experiment](docs/byte-perfect-rom-reconstruction.md)
+- [Multi-console foundation: architecture and scope](docs/multi-console-foundation.md)
+- [Target platform and toolchain matrix](docs/target-platform-matrix.md)
+- [Asset pipeline and target capability profiles](docs/asset-and-capability-pipeline.md)
+- [Legacy Windows: Rust and SDL compatibility](docs/legacy-windows-sdl-rust.md)
+- [Multi-console implementation roadmap](docs/multiconsole-roadmap.md)
+- [Byte-perfect ROM reconstruction and C-to-Rust research](docs/byte-perfect-rom-reconstruction.md)
 - [Impossible Engine compiler architecture](docs/impossible-engine-architecture.md)
 
-The initial reverse-engineering case studies are **Pokémon FireRed/LeafGreen** and **Pokémon Emerald**. The goal is to understand the original C/assembly implementations, port their C portions to Rust, and investigate how closely the Rust implementation can reproduce the original executable bytes.
+## 🌈 Research status
 
-This repository is currently a research and architecture foundation. The documents describe goals and experimental methodology, not completed ports or verified byte-perfect Rust builds.
+The documents describe research findings, architectural proposals, and validation plans. They do not imply that every listed console, operating system, renderer, or SDK is already implemented or tested by this repository.
+
+The first intended game consumers are StreetChavesRust and PointBlankRust. The Foundation is designed to remain reusable by other games and tools as well.
