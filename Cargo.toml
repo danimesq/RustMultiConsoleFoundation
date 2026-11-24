@@ -1,0 +1,12 @@
+[workspace]
+members = ["crates/foundation-packaging"]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/danimesq/RustMultiConsoleFoundation"
+
+[workspace.dependencies]
+cargo-packager = { version = "=0.11.8", default-features = false }
+toml = "0.8"
