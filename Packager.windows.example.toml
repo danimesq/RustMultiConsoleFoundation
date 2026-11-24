@@ -1,0 +1,18 @@
+# Copy this file to Packager.toml in a game project and adjust its metadata.
+# The binary must already exist in binaries-dir before packaging starts.
+
+product-name = "Your Game"
+version = "0.1.0"
+identifier = "org.example.your-game"
+description = "A game built with RustMultiConsoleFoundation"
+out-dir = "dist/windows"
+binaries-dir = "target/release"
+target-triple = "x86_64-pc-windows-msvc"
+formats = ["nsis"]
+
+[[binaries]]
+path = "your-game.exe"
+main = true
+
+# Optional application resources can be added with:
+# resources = ["assets/**"]
