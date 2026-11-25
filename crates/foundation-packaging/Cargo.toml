@@ -1,0 +1,15 @@
+[package]
+name = "foundation-packaging"
+version = "0.1.0"
+description = "RustMultiConsoleFoundation packaging integration powered by Cargo Packager"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+cargo-packager.workspace = true
+toml.workspace = true
+
+[[bin]]
+name = "foundation-packager"
+path = "src/main.rs"
