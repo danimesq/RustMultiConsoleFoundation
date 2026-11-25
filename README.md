@@ -24,6 +24,8 @@ The adapter pins Cargo Packager to version `0.11.8` and disables its CLI feature
 
 ## 🌈 Documentation
 
+- [Rust Gaming Eclipse: shared architecture and integration contract](docs/rust-gaming-eclipse.md)
+
 - [Multi-console foundation: architecture and scope](docs/multi-console-foundation.md)
 - [Multi-backend platform abstraction and target-specific SDL selection](docs/multi-backend-platform-abstraction.md)
 - [Reproducible builds: architecture and implementation plan](docs/reproducible-builds-plan.md)
