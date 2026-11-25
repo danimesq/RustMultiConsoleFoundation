@@ -2,6 +2,16 @@
 
 A reusable Rust game-development foundation for exploring native, web, legacy desktop, and classic-console targets. The project focuses on shared game logic with target-specific runtimes, renderers, assets, and build pipelines.
 
+## 🌈 Runtime API (early scaffold)
+
+The new `foundation-runtime` crate introduces a backend-neutral public API for normalized input, capabilities, renderer-neutral frame output, semantic audio requests, and a small frame coordinator. It has no SDL, Bevy, Orbital, browser, or console SDK dependency yet.
+
+- [Initial runtime API documentation](docs/foundation-runtime-api.md)
+- Mock-host example: `cargo run -p foundation-runtime --example mock_host`
+- Tests: `cargo test -p foundation-runtime`
+
+This is an API scaffold only; it does not yet provide a production backend or guarantee support for any target.
+
 ## 🌈 Packaging
 
 The Foundation includes a Rust packaging adapter powered by [Cargo Packager](https://github.com/crabnebula-dev/cargo-packager). It currently exposes a Foundation-owned CLI and a library API for reading TOML configuration and generating platform packages.
@@ -24,6 +34,7 @@ The adapter pins Cargo Packager to version `0.11.8` and disables its CLI feature
 
 ## 🌈 Documentation
 
+- [Initial runtime API](docs/foundation-runtime-api.md)
 - [Multi-console foundation: architecture and scope](docs/multi-console-foundation.md)
 - [Multi-backend platform abstraction and target-specific SDL selection](docs/multi-backend-platform-abstraction.md)
 - [Reproducible builds: architecture and implementation plan](docs/reproducible-builds-plan.md)
