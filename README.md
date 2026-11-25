@@ -33,6 +33,7 @@ The adapter pins Cargo Packager to version `0.11.8` and disables its CLI feature
 - [Multi-console implementation roadmap](docs/multiconsole-roadmap.md)
 - [Byte-perfect ROM reconstruction and C-to-Rust research](docs/byte-perfect-rom-reconstruction.md)
 - [Impossible Engine compiler architecture](docs/impossible-engine-architecture.md)
+- [Built-in multiPong reference game and Rust Pong research](docs/builtin-multipong-reference.md)
 
 ## 🌈 Research status
 
