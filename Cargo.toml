@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/foundation-packaging"]
+members = ["crates/foundation-packaging", "crates/foundation-runtime"]
 resolver = "2"
 
 [workspace.package]
