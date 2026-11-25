@@ -197,17 +197,68 @@ Repository search also surfaced names such as `multiversx/mx-ping-pong-sc`, `0xp
 
 The [ggez Projects list](https://github.com/ggez/ggez/blob/master/docs/Projects.md) explicitly lists [yotam5/pong_ggez](https://github.com/yotam5/pong_ggez) and [rust-game-ports' Boing/ggez port](https://github.com/rust-gamedev/rust-game-ports/tree/master/boing-ggez). The [rust-game-ports repository](https://github.com/rust-gamedev/rust-game-ports) is an educational collection of Rust game-library ports and includes Boing/ggez among its examples. It was archived in March 2026, so treat it as a historical reference rather than an actively maintained upstream.
 
-##🌈 Initial recommendation: study multiple projects, do not adopt an engine
+##🌈 Chosen research trio: Web, Bevy/physics, and PSP
 
-The first inspection pass should prioritize:
+The selected primary references are:
 
-1. **yotam5/pong_ggez** for a modular small-game structure and state separation.
-2. **j0of/pong-macroquad-hecs** for a compact immediate-mode 2D implementation.
-3. **bzar/wasm-pong-rs** for browser/WASM-specific constraints and integration.
-4. **0xAlcibiades/rusty-pong** for a richer gameplay loop, audio, pause and testable state boundaries.
-5. **marikka/micropong**, **esp32-pong-game**, and **psp-pong** for constrained/console-style platform research.
+1. **[bzar/wasm-pong-rs](https://github.com/bzar/wasm-pong-rs)** because it already demonstrates a Rust-to-WebAssembly export path.
+2. **[0xAlcibiades/rusty-pong](https://github.com/0xAlcibiades/rusty-pong)** because its Bevy architecture and Rapier2D integration are useful examples of a richer game loop.
+3. **[mov-rax/psp-pong](https://github.com/mov-rax/psp-pong)** because it is a real Rust PSP homebrew example using rust-psp and embedded-graphics.
 
-No one repository should dictate multiPong's architecture. The likely best result is an original Foundation-native implementation that borrows only well-understood, license-compatible ideas and keeps its simulation independent of the presentation backend.
+These are complementary references, not competing candidates from which one must be selected. multiPong should converge on a common game model and Foundation-owned platform boundary, learning from all three without copying any one implementation wholesale.
+
+###🌈 Findings from source inspection
+
+**wasm-pong-rs**
+
+- The README documents `wasm-pack build --target=web` and serving its `index.html`.
+- Its crate is a `cdylib` and uses `wasm-bindgen`, `js-sys`, `gloo`, and selected `web-sys` browser APIs.
+- The inspected implementation directly acquires an HTML canvas and WebGL context, installs browser keyboard listeners, schedules animation frames, and uses Web Audio APIs.
+- It is valuable as a concrete Web export and browser integration reference. Its browser-specific code should remain behind a Foundation Web adapter rather than leak into multiPong's simulation.
+- The inspected repository files did not expose a license file in the queried root listing. License and asset provenance must be confirmed before any reuse.
+
+**rusty-pong**
+
+- The README describes Bevy 0.15, `bevy_rapier2d`, Bevy state management, audio, AI, pause, scoring, and splash/game-over states.
+- The inspected `main.rs` separates gameplay into plugins and models a flow of Splash, Playing, Paused, and GameOver.
+- The inspected `ball.rs` uses Rapier rigid bodies, colliders, restitution, and velocity for ball movement and collision.
+- Its README declares MIT. The exact license and all dependency/asset notices still need to be retained and checked at the revision used for any reuse.
+- Bevy is a game engine/framework. Rapier2D is a 2D physics engine integrated into Bevy through `bevy_rapier2d`. Neither is a replacement for SDL: SDL is a multimedia/platform library commonly used for windowing, input, audio, and rendering-related access. Rapier addresses physics simulation, a different layer entirely.
+- For baseline Pong, deterministic custom collision may be simpler and more portable than bringing in a physics engine. Keep physics optional or use it only if a later game mode genuinely benefits from it. Bevy's state/plugin organization can be studied independently of adopting Bevy as multiPong's runtime.
+
+**psp-pong**
+
+- The README identifies it as a Rust PSP game using rust-psp and embedded-graphics, and requires an old nightly toolchain (README says nightly 1.50 or newer).
+- The inspected entry point is `no_std`/`no_main`, registers a PSP module, and starts a controller using the PSP framebuffer.
+- The controller reads PSP controls and hardware ticks directly, renders through the PSP framebuffer/embedded-graphics, and contains its own game loop.
+- This is valuable evidence that Rust Pong can target a constrained console environment, but it is not a drop-in backend for modern desktop/Web code. Its legacy toolchain, `no_std` assumptions, SDK/runtime requirements, and direct hardware APIs need an isolated target adapter and explicit compatibility work.
+- No license file was identified in the inspected root listing. Do not copy code or assets until licensing is established.
+
+###🌈 Convergent architecture for one game across targets
+
+The goal is one multiPong game, not three separate ports that happen to share a name. The proposed common architecture is:
+
+1. **Platform-neutral simulation:** ball/paddle state, collision, scoring, match states, deterministic stepping, and game rules. No SDL, Bevy, Rapier, browser DOM, PSP SDK, or framebuffer APIs in this layer.
+2. **Input action model:** normalize keyboard, touch, gamepad, browser events, and PSP controls into game actions such as move-up, move-down, confirm, pause, and diagnostics-toggle.
+3. **Rendering contract:** the game emits a small set of drawing primitives or render commands. Desktop, mobile, Web, and PSP adapters translate these into their native presentation path.
+4. **Clock/timing contract:** simulation uses a controlled timestep; each platform supplies monotonic time/frame scheduling. Avoid letting browser animation callbacks or PSP hardware ticks define game rules.
+5. **Audio contract:** gameplay emits sound intents; an available target audio adapter plays them. Missing audio must not prevent the game from running.
+6. **Capability and diagnostics contract:** Foundation reports the actual backend, display/resolution, input devices, audio state, runtime capabilities, fallbacks, and warnings. multiPong displays those reports without probing platform APIs itself.
+7. **Target-specific packaging/build:** each target has its own toolchain, output format, and validation evidence while consuming the same game rules.
+
+This is the intended convergence: share the game model and public Foundation contracts, not necessarily every low-level implementation detail. The PSP adapter may require `no_std`-compatible dependencies and a different presentation path; the Web adapter may use wasm-bindgen/browser APIs; desktop/mobile adapters may use other Foundation-selected backends. These differences are isolated below the game-facing API.
+
+The desired product path is to demonstrate the same multiPong rules on **desktop, mobile, Web, and PSP**, with each target marked only after it has actually built and been tested. The selected reference repositories directly demonstrate Web and PSP approaches; they do not, by themselves, prove mobile support. Mobile is a Foundation target to implement and validate separately.
+
+###🌈 Suggested study order
+
+1. Extract the Web build/export and browser lifecycle lessons from wasm-pong-rs.
+2. Extract Bevy's state/plugin organization and the separation between game states, audio, and physics from rusty-pong. Treat Rapier as optional physics, not a platform backend.
+3. Extract PSP toolchain, framebuffer, controls, timing, and `no_std` constraints from psp-pong.
+4. Write a comparison note with accepted/rejected ideas and license findings.
+5. Implement the common multiPong model against Foundation APIs, then connect the target adapters.
+
+No one repository should dictate multiPong's architecture. The result should be an original Foundation-native implementation informed by all three, with a shared simulation and explicit target boundaries.
 
 ##🌈 License and provenance checklist
 
@@ -239,3 +290,26 @@ Before copying code, assets, tests, or substantial structure from any project:
 - [Macroquad](https://github.com/not-fl3/macroquad)
 - [Bevy](https://github.com/bevyengine/bevy)
 - [ggez](https://github.com/ggez/ggez)
+- [wasm-pong-rs](https://github.com/bzar/wasm-pong-rs)
+- [rusty-pong](https://github.com/0xAlcibiades/rusty-pong)
+- [psp-pong](https://github.com/mov-rax/psp-pong)
+- [SLMT/rust-snake](https://github.com/SLMT/rust-snake)
+- [marcusbuffett/bevy_snake](https://github.com/marcusbuffett/bevy_snake)
+- [yiransheng/rust-snake-wasm](https://github.com/yiransheng/rust-snake-wasm)
+- [libesz/embedded-snake-rs](https://github.com/libesz/embedded-snake-rs)
+
+
+##🌈 After multiPong: multiSnake
+
+The next built-in reference game after multiPong is planned to be **multiSnake**. This is a follow-on direction, not part of the current Pong implementation scope.
+
+Snake complements Pong as a second conformance workload: it exercises grid/tile rendering, discrete tick-based movement, direction changes, input buffering, deterministic random food placement, growing collections, self-collision, board boundaries, pause/game-over states, and potentially save/replay behavior. Together, multiPong and multiSnake would validate both continuous movement/collision and discrete grid-based simulation.
+
+A preliminary Rust Snake search surfaced these research leads:
+
+- [SLMT/rust-snake](https://github.com/SLMT/rust-snake): a straightforward Rust Snake with arrow-key controls; its README identifies an MIT license.
+- [marcusbuffett/bevy_snake](https://github.com/marcusbuffett/bevy_snake): a Bevy-oriented Snake lead to inspect for ECS/state organization.
+- [yiransheng/rust-snake-wasm](https://github.com/yiransheng/rust-snake-wasm): a WebAssembly-oriented Snake lead.
+- [libesz/embedded-snake-rs](https://github.com/libesz/embedded-snake-rs): an embedded Snake lead for constrained-target research.
+
+These are discovery leads only. Their current source, licenses, assets, and target claims have not yet been audited. A separate multiSnake research/design document should be created before implementation, following the same rule: learn from multiple projects and converge on the Foundation's common game-facing abstractions rather than adopting one project wholesale.
