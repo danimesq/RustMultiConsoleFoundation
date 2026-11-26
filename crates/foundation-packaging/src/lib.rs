@@ -1,7 +1,11 @@
 //! Cargo Packager integration for RustMultiConsoleFoundation.
 //!
-//! The Foundation owns the stable entry point and configuration loading;
-//! Cargo Packager owns the platform-specific installer generation.
+//! Foundation-owned build and packaging pipelines for game consumers.
+//! Native installer creation delegates to Cargo Packager; WebAssembly builds
+//! are compiled, bound, assembled and archived by the Web build pipeline.
+
+/// Source-driven WebAssembly compilation and Web package publishing.
+pub mod web_build;
 
 use std::error::Error;
 use std::fs;
