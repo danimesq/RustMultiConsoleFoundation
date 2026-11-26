@@ -4,9 +4,7 @@
 
 A shared game should not require one identical sprite sheet, model, texture, or audio file to fit every platform.
 
-RustMultiConsoleFoundation should maintain a canonical source-asset workflow and generate target-specific packs from it. The game logic can remain shared while graphics, animation data, geometry, materials, audio, and packaging are adapted to the capabilities of each target.
-
-This document proposes the workflow. It does not claim that the converters or profile schema have already been implemented.
+RustMultiConsoleFoundation owns the canonical source-asset workflow and target-build orchestration. The initial Web/WASM build implementation compiles consumer Rust source, stages a versioned resource package, generates the HTML shell and ZIP, and preserves source-to-output provenance. The broader target-specific conversion pipeline described below remains an implementation roadmap: palette/tiling conversion, model reduction, audio transcoding, streaming audio and console-specific packers are not implied by the Web build alone.
 
 ## 🌈 2. Canonical source assets and target outputs
 
@@ -153,6 +151,8 @@ The asset compiler can then build a target-specific manifest and packed resource
 Keep gameplay data separate from target-rendering details wherever possible. Target variants should be explicit and inspectable rather than hidden behind silent runtime substitutions.
 
 ## 🌈 8. Deterministic asset builds and provenance
+
+The first source-driven Web publisher is implemented in `foundation-packaging::web_build`. It accepts source-root-relative files and explicit package destinations, validates that asset inputs stay inside the configured source root, records optional upstream URLs, and emits a deployable directory and ZIP. Target conversion tools will be added as Foundation build stages rather than pushed into each game repository.
 
 For repeatable builds:
 

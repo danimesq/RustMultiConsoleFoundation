@@ -52,3 +52,10 @@ The Foundation host owns the SDL window/event pump, renderer textures, audio dev
 ## Target boundary
 
 The `native-sdl3` feature is opt-in and the SDL dependency is target-gated away from wasm32. The platform-neutral runtime API has a separate `wasm32-unknown-unknown` compile check. This PR does not implement a browser Canvas/WebGL host or console SDK adapters.
+
+
+## Foundation-owned build pipeline
+
+Runtime consumers use `foundation-runtime`; source publishing tools use the `foundation-packaging` crate. Its `web_build` module exposes `WebBuildConfig` and `build_web_from_file()`. It compiles the game crate from source with Cargo, invokes `wasm-bindgen`, stages assets through Foundation's `WebExportBuilder`, generates an HTML shell and writes a directory plus optional ZIP archive.
+
+Use `foundation-web-build --config FoundationWebBuild.toml` from the Foundation workspace, or depend on the `foundation-packaging` library from another native publishing tool. The game project supplies source and resource mappings; Foundation owns target build orchestration and publication.

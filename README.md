@@ -45,6 +45,28 @@ The generated installer is written to the configured `out-dir`. Cargo Packager d
 
 The adapter pins Cargo Packager to version `0.11.8` and disables its CLI feature because the Foundation calls its Rust library API directly. The external NSIS/WiX toolchain and target-specific requirements remain separate prerequisites.
 
+### WebAssembly browser build
+
+Foundation also owns a source-driven Web build. Unlike the native installer step above, this pipeline compiles the consumer's Rust source itself, then generates JavaScript/WASM glue, an HTML shell, the resource package, a versioned manifest and an optional ZIP archive.
+
+Install the browser target and a `wasm-bindgen` CLI version that matches the consumer's `wasm-bindgen` crate:
+
+```sh
+rustup target add wasm32-unknown-unknown
+cargo install wasm-bindgen-cli
+```
+
+Add a `FoundationWebBuild.toml` to the game repository with its Cargo package/crate name, features, source-asset root, resource mappings, HTML title/canvas, bootstrap module and output paths. Then invoke Foundation:
+
+```sh
+cargo run -p foundation-packaging --bin foundation-web-build -- \
+  --config FoundationWebBuild.toml
+```
+
+Foundation runs `cargo build --target wasm32-unknown-unknown`, runs `wasm-bindgen`, stages the source assets using `WebExportBuilder`, generates `index.html`, and writes both the deployable directory and the requested ZIP. Consumers do not pass a precompiled WASM file to Foundation and do not own the packaging command.
+
+See [Foundation WebAssembly export and browser runtime](docs/web-canvas2d-webaudio.md) for the configuration schema and example.
+
 ## 🌈 Documentation
 
 - [Rust Gaming Eclipse: shared architecture and integration contract](docs/rust-gaming-eclipse.md)

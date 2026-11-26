@@ -9,7 +9,15 @@ repository.workspace = true
 [dependencies]
 cargo-packager.workspace = true
 toml.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+foundation-runtime = { path = "../foundation-runtime" }
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [[bin]]
 name = "foundation-packager"
 path = "src/main.rs"
+
+[[bin]]
+name = "foundation-web-build"
+path = "src/web_main.rs"
