@@ -60,3 +60,8 @@ A future game migration should therefore replace its SDL device/window/renderer/
 ## Current backend limits
 
 The first SDL3 host implements window creation, logical scaling/letterboxing, keyboard input, texture registration, BMP/PNG decode, WAV playback and audio clip control. Mouse and gamepad capabilities are currently reported as unavailable. Text rendering, controller hotplug, persistent storage and device hotplug/recovery remain future capabilities; unsupported features are not silently reported as working.
+
+
+## Configurable physical-key capture
+
+`InputSnapshot::physical_key_pressed` exposes the most recent non-repeat physical key press as a platform-neutral `PhysicalKey`. `RuntimeHost::set_player_one_key_map` updates the eight player-one bindings (four directions and four attacks) without changing game simulation code. SDL3 and Canvas 2D/WebAssembly use the same `PlayerOneKeyMap`; player two's default layout and the five special slots remain separate.
