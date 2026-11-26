@@ -1,41 +1,54 @@
-# foundation-runtime: initial public API
+# foundation-runtime: consumer API
 
-This is the first concrete consumer-facing runtime crate in RustMultiConsoleFoundation. It is backend-neutral and has no external dependencies in this first slice.
+The `foundation-runtime` crate provides a platform-neutral API plus an optional native SDL3 host. Game code depends on Foundation types, never on SDL window, texture, event, or audio-device handles.
 
-## Included API
+## Public boundary
 
-- `RuntimeConfig`: requested logical display configuration.
-- `Capabilities` and `CapabilityStatus`: explicit supported, unavailable, emulated, degraded, and unknown reporting.
-- `InputSnapshot`: normalized directional, confirm/cancel, pointer, and quit state.
-- `DrawCommand` and `FrameOutput`: minimal renderer-neutral frame output.
-- `AudioRequest`: semantic audio request values.
-- `RuntimeHost`: trait implemented by platform adapters.
-- `Runtime`: frame coordinator that polls input, invokes consumer update, dispatches audio, and presents output.
-- `RuntimeError`: typed error cases.
+- `RuntimeConfig`: window title, logical dimensions and pixel-art scaling preference.
+- `Capabilities`: explicit availability for display, keyboard, pointer, gamepad, audio and storage.
+- `InputSnapshot` / `PlayerInputSnapshot`: normalized UI and two-player input, including held, pressed and released masks.
+- `RgbaImage`, `TextureId`, `Rect`, `DrawCommand` and `FrameOutput`: backend-neutral image and drawing vocabulary.
+- `AudioClipId` / `AudioRequest`: semantic WAV playback, loop, stop and diagnostic beep requests.
+- `RuntimeHost`: adapter contract for time, input, rendering and audio.
+- `Runtime`: optional outer frame coordinator. Deterministic games should keep their own fixed-step simulation clock.
 
-## Consumer example
+## Native backend
 
-See `examples/mock_host.rs`. It demonstrates one frame through a mock host without requiring a native window.
+Enable the optional feature and construct the concrete host:
 
-## Architecture boundaries
-
-- Does not initialize SDL, Bevy, Orbital, browser APIs, or console SDKs.
-- Does not yet implement a production renderer, audio device, storage, or host event loop.
-- Adapter owns host integration. Avoid duplicate event loop/window/input ownership.
-- Consumer owns game state and simulation timing. Frame delta is not a replacement for fixed-step deterministic simulation.
-- Capability support is explicit; unsupported operations must not silently succeed.
-- Bevy remains optional. A later Bevy adapter can bridge this API only after host-loop ownership is validated.
-
-## Current status
-
-Initial `0.1.0` API scaffold, not yet backed by a validated native, web, or console adapter. Before consumer integration, implement and validate one host adapter, a target matrix, feature/MSRV policy, and adapter-level tests. This API may evolve before `1.0`.
-
-## Validate
-
-```sh
-cargo test -p foundation-runtime
-cargo run -p foundation-runtime --example mock_host
-cargo doc -p foundation-runtime --no-deps
+```toml
+foundation-runtime = { git = "https://github.com/danimesq/RustMultiConsoleFoundation", features = ["native-sdl3"] }
 ```
 
-Cargo features and optional backend dependencies should remain additive and documented. See the Cargo feature guide: https://doc.rust-lang.org/cargo/reference/features.html
+```rust
+use foundation_runtime::native_sdl::Sdl3Host;
+use foundation_runtime::{RuntimeConfig, RuntimeHost, FrameOutput};
+
+let mut host = Sdl3Host::new(RuntimeConfig {
+    title: "My game".into(),
+    width: 400,
+    height: 300,
+    pixel_art: true,
+})?;
+let input = host.poll_input()?;
+host.present(&FrameOutput::default())?;
+# Ok::<(), foundation_runtime::RuntimeError>(())
+```
+
+Run the native SDL3 demonstration from the Foundation workspace:
+
+```sh
+cargo run -p foundation-runtime --example native_sdl3_host --features native-sdl3
+```
+
+See [Native SDL3 host](native-sdl3-host.md) for the concrete APIs, keyboard map, audio mixer and validation boundaries.
+
+## Timing and ownership
+
+The Foundation host owns the SDL window/event pump, renderer textures, audio device callback and decoded audio clips. Consumers own game state, fixed-tick decisions, resource naming, sprite selection and semantic audio-event mapping. A consumer should not initialize a second SDL window or device callback beside the Foundation host.
+
+`Runtime::step` is a convenience for frame-driven apps. StreetChavesRust uses a 28 ms deterministic simulation tick, so its native loop should use `FixedTimestepClock` and call the Foundation host's `poll_input`, `audio` and `present` methods around the existing simulation. The Foundation does not take over that game-specific cadence.
+
+## Target boundary
+
+The `native-sdl3` feature is opt-in and the SDL dependency is target-gated away from wasm32. The platform-neutral runtime API has a separate `wasm32-unknown-unknown` compile check. This PR does not implement a browser Canvas/WebGL host or console SDK adapters.
