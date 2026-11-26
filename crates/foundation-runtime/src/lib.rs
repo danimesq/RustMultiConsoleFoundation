@@ -366,11 +366,11 @@ mod tests {
 
     #[test]
     fn frame_step_dispatches_audio_and_presents() {
-        let host = MockHost {
-            time: Duration::from_millis(16),
-            ..Default::default()
-        };
+        // The runtime captures the host clock as its origin during construction.
+        // Advance the mock clock afterwards so this frame really has a 16 ms delta.
+        let host = MockHost::default();
         let mut runtime = Runtime::new(host, RuntimeConfig::default()).unwrap();
+        runtime.host_mut().time = Duration::from_millis(16);
         let frame = runtime
             .step(|ctx| {
                 assert_eq!(ctx.frame_number, 0);
