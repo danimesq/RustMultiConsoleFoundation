@@ -9,7 +9,6 @@ use crate::{
     FrameOutput, InputSnapshot, PadDirection, PlayerInputSnapshot, Rect, RgbaImage,
     RuntimeConfig, RuntimeError, RuntimeHost, TextureId,
 };
-use hound::{SampleFormat, WavReader};
 use js_sys::{ArrayBuffer, Uint8Array};
 use serde::Deserialize;
 use std::cell::RefCell;
@@ -39,6 +38,9 @@ pub struct WebAssetManifest {
 pub struct WebAssetEntry {
     pub id: String,
     pub path: String,
+    /// Optional alternate encodings/URLs, tried in order when the primary fails.
+    #[serde(default)]
+    pub fallbacks: Vec<String>,
     pub kind: WebAssetKind,
 }
 
@@ -143,6 +145,7 @@ pub struct Canvas2dHost {
     textures: HashMap<TextureId, HtmlCanvasElement>,
     audio_context: Option<AudioContext>,
     audio_buffers: HashMap<AudioClipId, AudioBuffer>,
+    audio_volumes: HashMap<AudioClipId, f32>,
     active_voices: Vec<ActiveVoice>,
     next_texture_id: u64,
     next_audio_clip_id: u64,
@@ -258,6 +261,7 @@ impl Canvas2dHost {
             textures: HashMap::new(),
             audio_context,
             audio_buffers: HashMap::new(),
+            audio_volumes: HashMap::new(),
             active_voices: Vec::new(),
             next_texture_id: 1,
             next_audio_clip_id: 1,
@@ -368,78 +372,45 @@ impl Canvas2dHost {
         self.register_image_bytes(&bytes)
     }
 
-    /// Decode a WAV into a WebAudio buffer. Browser output performs the final device mix.
-    pub fn register_wav_bytes(
+    /// Decode an audio file supported by the current browser into a WebAudio buffer.
+    ///
+    /// This uses decodeAudioData(), so exported assets can use browser-supported formats
+    /// such as WAV, OGG, MP3, or AAC/M4A where the browser supports them.
+    pub async fn register_audio_bytes(
         &mut self,
         bytes: &[u8],
         volume_percent: i32,
     ) -> Result<AudioClipId, RuntimeError> {
         let context = self
             .audio_context
-            .as_ref()
+            .clone()
             .ok_or(RuntimeError::Unsupported("WebAudio is unavailable"))?;
-        let mut reader = WavReader::new(Cursor::new(bytes))
-            .map_err(|error| RuntimeError::Host(format!("WAV decode failed: {error}")))?;
-        let spec = reader.spec();
-        if spec.channels == 0 || spec.sample_rate == 0 || spec.bits_per_sample == 0 {
-            return Err(RuntimeError::InvalidConfig("WAV has invalid format metadata"));
-        }
-
-        let samples = match spec.sample_format {
-            SampleFormat::Float => reader
-                .samples::<f32>()
-                .map(|sample| sample.map_err(|error| RuntimeError::Host(error.to_string())))
-                .collect::<Result<Vec<_>, _>>()?,
-            SampleFormat::Int => {
-                let shift = spec.bits_per_sample.saturating_sub(1).min(31);
-                let denominator = (1_u64 << shift) as f32;
-                reader
-                    .samples::<i32>()
-                    .map(|sample| {
-                        sample
-                            .map(|value| value as f32 / denominator)
-                            .map_err(|error| RuntimeError::Host(error.to_string()))
-                    })
-                    .collect::<Result<Vec<_>, _>>()?
-            }
-        };
-
-        let channels = usize::from(spec.channels);
-        let frames = samples.len() / channels;
-        if frames == 0 || frames > u32::MAX as usize {
-            return Err(RuntimeError::InvalidConfig("WAV contains no playable audio frames"));
-        }
-
-        let volume = volume_percent.clamp(0, 400) as f32 / 100.0;
-        let mut left = Vec::with_capacity(frames);
-        let mut right = Vec::with_capacity(frames);
-        for frame in 0..frames {
-            let offset = frame * channels;
-            let l = samples[offset] * volume;
-            let r = if channels == 1 { l } else { samples[offset + 1] * volume };
-            left.push(l.clamp(-1.0, 1.0));
-            right.push(r.clamp(-1.0, 1.0));
-        }
-
-        let buffer = context
-            .create_buffer(2, frames as u32, spec.sample_rate as f32)
+        let encoded = Uint8Array::from(bytes);
+        let promise = context
+            .decode_audio_data(&encoded.buffer())
             .map_err(js_error)?;
-        buffer.copy_to_channel(&left, 0).map_err(js_error)?;
-        buffer.copy_to_channel(&right, 1).map_err(js_error)?;
+        let decoded = JsFuture::from(promise)
+            .await
+            .map_err(js_error)?
+            .dyn_into::<AudioBuffer>()
+            .map_err(js_error)?;
 
         let id = AudioClipId(self.next_audio_clip_id);
         self.next_audio_clip_id = self.next_audio_clip_id.saturating_add(1);
-        self.audio_buffers.insert(id, buffer);
+        self.audio_buffers.insert(id, decoded);
+        self.audio_volumes
+            .insert(id, volume_percent.clamp(0, 400) as f32 / 100.0);
         Ok(id)
     }
 
-    pub async fn load_wav_url(
+    /// Fetch and decode a browser-supported audio file from a web package URL.
+    pub async fn load_audio_url(
         &mut self,
         url: &str,
         volume_percent: i32,
     ) -> Result<AudioClipId, RuntimeError> {
         let bytes = fetch_bytes(&self.window, url).await?;
-        self.register_wav_bytes(&bytes, volume_percent)
+        self.register_audio_bytes(&bytes, volume_percent).await
     }
 
     /// Load an exported-game manifest. Paths resolve relative to the manifest URL.
@@ -457,22 +428,50 @@ impl Canvas2dHost {
 
         let mut loaded = LoadedWebAssets::default();
         for asset in manifest.assets {
-            let url = Url::new_with_base(&asset.path, &base.href()).map_err(js_error)?;
-            let bytes = fetch_bytes(&self.window, &url.href()).await?;
-            match asset.kind {
-                WebAssetKind::Image => {
-                    let image = decode_image_bytes(&bytes)?;
-                    let id = self.register_texture(&image)?;
-                    loaded.textures.insert(asset.id.clone(), id);
-                    loaded.images.insert(asset.id, image);
+            let mut candidates = Vec::with_capacity(1 + asset.fallbacks.len());
+            candidates.push(asset.path);
+            candidates.extend(asset.fallbacks);
+            let mut last_error = None;
+            let mut registered = false;
+            for path in candidates {
+                validate_relative_asset_path(&path)?;
+                let url = Url::new_with_base(&path, &base.href()).map_err(js_error)?;
+                let attempt = async {
+                    let bytes = fetch_bytes(&self.window, &url.href()).await?;
+                    match asset.kind {
+                        WebAssetKind::Image => {
+                            let image = decode_image_bytes(&bytes)?;
+                            let id = self.register_texture(&image)?;
+                            loaded.textures.insert(asset.id.clone(), id);
+                            loaded.images.insert(asset.id.clone(), image);
+                        }
+                        WebAssetKind::Audio => {
+                            let id = self.register_audio_bytes(&bytes, 100).await?;
+                            loaded.audio_clips.insert(asset.id.clone(), id);
+                        }
+                        WebAssetKind::Data => {
+                            loaded.data.insert(asset.id.clone(), bytes);
+                        }
+                    }
+                    Ok::<(), RuntimeError>(())
                 }
-                WebAssetKind::Audio => {
-                    let id = self.register_wav_bytes(&bytes, 100)?;
-                    loaded.audio_clips.insert(asset.id, id);
+                .await;
+                match attempt {
+                    Ok(()) => {
+                        registered = true;
+                        break;
+                    }
+                    Err(error) => last_error = Some(error),
                 }
-                WebAssetKind::Data => {
-                    loaded.data.insert(asset.id, bytes);
-                }
+            }
+            if !registered {
+                return Err(RuntimeError::Host(format!(
+                    "all packaged sources failed for asset {}: {}",
+                    asset.id,
+                    last_error
+                        .map(|error| error.to_string())
+                        .unwrap_or_else(|| "no source paths were declared".to_owned())
+                )));
             }
         }
         Ok(loaded)
@@ -508,7 +507,7 @@ impl Canvas2dHost {
     ) -> Result<(), RuntimeError> {
         let context = self
             .audio_context
-            .as_ref()
+            .clone()
             .ok_or(RuntimeError::Unsupported("WebAudio is unavailable"))?;
         self.prune_finished_voices();
         self.stop_matching_voice(clip);
@@ -528,8 +527,11 @@ impl Canvas2dHost {
         let source = context.create_buffer_source().map_err(js_error)?;
         source.set_buffer(Some(&buffer));
         source.set_loop(looped);
-        source
-            .connect_with_audio_node(&context.destination())
+        let gain = context.create_gain().map_err(js_error)?;
+        let volume = self.audio_volumes.get(&clip).copied().unwrap_or(1.0);
+        gain.gain().set_value(volume);
+        source.connect_with_audio_node(&gain).map_err(js_error)?;
+        gain.connect_with_audio_node(&context.destination())
             .map_err(js_error)?;
         source.start().map_err(js_error)?;
 
