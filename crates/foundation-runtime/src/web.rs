@@ -580,6 +580,16 @@ impl Canvas2dHost {
         }
     }
 
+    fn release_all_held_keys(&mut self) {
+        let mut state = self.input.borrow_mut();
+        let held = std::mem::take(&mut state.held);
+        for code in held {
+            if let Some((player, slot)) = key_binding(&code) {
+                state.released[player] |= 1_u32 << slot;
+            }
+        }
+    }
+
     fn input_snapshot(&mut self) -> InputSnapshot {
         let mut state = self.input.borrow_mut();
         let players = std::array::from_fn(|player| PlayerInputSnapshot {
@@ -644,6 +654,10 @@ impl RuntimeHost for Canvas2dHost {
 
     fn poll_input(&mut self) -> Result<InputSnapshot, RuntimeError> {
         Ok(self.input_snapshot())
+    }
+
+    fn reset_input_after_pause(&mut self) {
+        self.release_all_held_keys();
     }
 
     fn present(&mut self, output: &FrameOutput) -> Result<(), RuntimeError> {
