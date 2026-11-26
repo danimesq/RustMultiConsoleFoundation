@@ -1,7 +1,7 @@
 [package]
 name = "foundation-runtime"
 version = "0.1.0"
-description = "Platform-neutral runtime contracts and optional native SDL3 host for RustMultiConsoleFoundation consumers"
+description = "Platform-neutral runtime contracts and SDL3/Canvas 2D hosts for RustMultiConsoleFoundation consumers"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
@@ -13,6 +13,51 @@ path = "src/lib.rs"
 [features]
 default = []
 native-sdl3 = ["dep:sdl3"]
+# Browser host for wasm32-unknown-unknown. WebGL is intentionally not included.
+web-canvas = [
+    "dep:wasm-bindgen",
+    "dep:wasm-bindgen-futures",
+    "dep:js-sys",
+    "dep:web-sys",
+    "dep:image",
+    "dep:serde",
+    "dep:serde_json",
+]
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 sdl3 = { version = "0.22.1", optional = true, default-features = false, features = ["build-from-source", "build-from-source-unix-console", "unsafe_textures"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = { version = "0.2", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+js-sys = { version = "0.3", optional = true }
+web-sys = { version = "0.3", optional = true, features = [
+    "Window",
+    "Document",
+    "Location",
+    "Element",
+    "HtmlElement",
+    "HtmlCanvasElement",
+    "CanvasRenderingContext2d",
+    "ImageData",
+    "Event",
+    "EventTarget",
+    "KeyboardEvent",
+    "Performance",
+    "Response",
+    "Url",
+    "AudioContext",
+    "BaseAudioContext",
+    "AudioDestinationNode",
+    "AudioNode",
+    "AudioBuffer",
+    "AudioBufferSourceNode",
+    "AudioScheduledSourceNode",
+    "OscillatorNode",
+    "OscillatorType",
+    "GainNode",
+    "AudioParam",
+] }
+image = { version = "0.25", default-features = false, features = ["bmp", "png"], optional = true }
+serde = { version = "1", features = ["derive"], optional = true }
+serde_json = { version = "1", optional = true }

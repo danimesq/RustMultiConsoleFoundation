@@ -565,6 +565,12 @@ impl RuntimeHost for Sdl3Host {
     }
 }
 
+impl crate::TextureRegistrar for Sdl3Host {
+    fn register_texture(&mut self, image: &RgbaImage) -> Result<TextureId, RuntimeError> {
+        Sdl3Host::register_texture(self, image)
+    }
+}
+
 fn host_error(error: impl std::fmt::Display) -> RuntimeError {
     RuntimeError::Host(error.to_string())
 }

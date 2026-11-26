@@ -12,6 +12,12 @@ pub mod audio;
 #[cfg(all(feature = "native-sdl3", not(target_arch = "wasm32")))]
 pub mod native_sdl;
 
+/// Browser Canvas 2D, keyboard, asset-manifest and WebAudio host.
+///
+/// This adapter targets `wasm32-unknown-unknown`; it does not compile SDL or WebGL.
+#[cfg(all(feature = "web-canvas", target_arch = "wasm32"))]
+pub mod web;
+
 /// Requested logical game display configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeConfig {
@@ -241,6 +247,18 @@ pub trait RuntimeHost {
     fn present(&mut self, output: &FrameOutput) -> Result<(), RuntimeError>;
     /// Dispatch a semantic audio request.
     fn audio(&mut self, request: &AudioRequest) -> Result<(), RuntimeError>;
+
+    /// Release any held physical inputs after a host pause/visibility transition.
+    ///
+    /// Default no-op keeps existing consumer host implementations source-compatible.
+    fn reset_input_after_pause(&mut self) {}
+}
+
+/// Resource registration contract shared by native and browser renderer hosts.
+///
+/// The returned ID is backend-neutral; the concrete host keeps its platform handle private.
+pub trait TextureRegistrar {
+    fn register_texture(&mut self, image: &RgbaImage) -> Result<TextureId, RuntimeError>;
 }
 
 /// Frame coordinator that consumers drive from their chosen host loop.
