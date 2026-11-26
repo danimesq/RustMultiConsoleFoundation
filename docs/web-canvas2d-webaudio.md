@@ -1,32 +1,156 @@
-# Browser Canvas 2D and WebAudio host
+# Foundation WebAssembly export and browser runtime
 
-## Scope
+## Purpose and ownership
 
-The optional `web-canvas` feature provides a browser host for `wasm32-unknown-unknown`. It uses the same Foundation runtime contract as the native SDL3 host:
+RustMultiConsoleFoundation defines the shared **Web/WASM export contract** for games and engines that use the library. A consumer supplies its application identity, the JavaScript/WASM files produced by its own build, and an explicit catalog of resources. Foundation validates that description, serializes the export manifest and loads the same package in its browser runtime.
 
-- `Canvas2dHost` implements `RuntimeHost`.
-- `DrawCommand`, `TextureId`, `AudioRequest`, and `AudioClipId` remain backend-neutral.
-- HTML Canvas 2D draws the same ordered commands produced for SDL3.
-- WebAudio plays clips registered by stable Foundation IDs.
-- Browser key events are normalized into the same two-player input snapshots.
-- WebGL is intentionally not part of this implementation.
+The ownership split is:
 
-The browser application owns its `requestAnimationFrame` loop and calls the host at the appropriate points. The game simulation must continue using its own fixed logical tick; display refresh rate must not become the simulation clock.
+- **ImpossibleEngine:** editable projects, including the native `project.ieproj` format, editor data, scenes, Event Sheets, objects, behaviors, scripts and source assets. Its publishing backend can use the Foundation export API.
+- **RustMultiConsoleFoundation:** the common Web/WASM package contract, manifest builder and validation, browser URL resolution, resource fetching/decoding, Canvas 2D and WebAudio host.
+- **StreetChavesRust:** game simulation, game-specific resource identity and interpretation, and the Street Chaves export assembled through the Foundation API.
 
-## Build
+The manifest is generic. It does not identify or emulate another editor's export layout, and it does not guess asset filenames or directory conventions. Every file path is explicit and relative to `web-export.json`.
 
-Add the target and compile the web feature:
+## The Web export package
+
+A package uses one manifest at its root:
+
+```text
+web/
+  index.html
+  main.js
+  web-export.json
+  pkg/
+    game.js
+    game_bg.wasm
+  assets/
+    images/
+    audio/
+      effects/
+      music/
+    data/
+```
+
+The JavaScript glue and WASM module are produced by the consuming game's own `wasm-bindgen`/`wasm-pack` build. The Foundation builder records their package-relative paths alongside the application metadata and resource catalog.
+
+Example `web-export.json`:
+
+```json
+{
+  "schema_version": 1,
+  "application": {
+    "id": "street-chaves",
+    "name": "Street Chaves"
+  },
+  "wasm": {
+    "javascript_glue": "pkg/street_chaves.js",
+    "wasm_module": "pkg/street_chaves_bg.wasm"
+  },
+  "assets": [
+    {
+      "id": "stage_01",
+      "path": "assets/images/stages/stage-01.webp",
+      "kind": "image"
+    },
+    {
+      "id": "fighter_chaves",
+      "path": "assets/images/fighters/C01.png",
+      "kind": "image"
+    },
+    {
+      "id": "fight_hit_01",
+      "path": "assets/audio/effects/hit-01.ogg",
+      "fallbacks": [
+        "assets/audio/effects/hit-01.m4a",
+        "assets/audio/effects/hit-01.wav"
+      ],
+      "volume_percent": 85,
+      "kind": "audio"
+    },
+    {
+      "id": "fight_music",
+      "path": "assets/audio/music/theme.ogg",
+      "fallbacks": [
+        "assets/audio/music/theme.m4a",
+        "assets/audio/music/theme.mp3"
+      ],
+      "kind": "audio"
+    },
+    {
+      "id": "fighter_config_chaves",
+      "path": "assets/data/C01.ini",
+      "kind": "data"
+    }
+  ]
+}
+```
+
+The schema is versioned independently from the consumer's game and editor versions. Resource IDs are stable game-facing names; paths describe the actual files shipped in the package. Folder names and filename case are preserved exactly as authored.
+
+## Build a manifest with the Foundation library
+
+The manifest API is available on native and WASM targets through `foundation_runtime::web_export`. Engine exporters and game build tools can use the same types:
+
+```rust
+use foundation_runtime::web_export::{
+    WebAssetKind, WebExportAsset, WebExportBuilder, WEB_EXPORT_MANIFEST_FILE,
+};
+
+let manifest = WebExportBuilder::new("street-chaves", "Street Chaves")
+    .wasm_bundle(
+        "pkg/street_chaves.js",
+        "pkg/street_chaves_bg.wasm",
+    )
+    .asset(WebExportAsset::new(
+        "stage_01",
+        "assets/images/stages/stage-01.webp",
+        WebAssetKind::Image,
+    ))
+    .asset(
+        WebExportAsset::new(
+            "fight_music",
+            "assets/audio/music/theme.ogg",
+            WebAssetKind::Audio,
+        )
+        .with_fallbacks([
+            "assets/audio/music/theme.m4a",
+            "assets/audio/music/theme.mp3",
+        ]),
+    )
+    .build()?;
+
+let json = manifest.to_json()?;
+std::fs::write(output_dir.join(WEB_EXPORT_MANIFEST_FILE), json)?;
+```
+
+`WebExportBuilder` validates the application ID, JavaScript/WASM paths, unique asset IDs, asset paths, fallback paths and audio volume range. `WebExportManifest::parse` applies the same validation when reading a published package. All paths must be safe relative paths; absolute paths, traversal segments, URL schemes and backslashes are rejected.
+
+The builder creates the versioned export descriptor. The consuming build/publishing step is responsible for compiling the game crate, placing the generated JavaScript/WASM files and copying each declared asset to its declared path. This first slice does not yet provide a ZIP packager, HTML template generator, asset transcoder or content-addressed optimizer.
+
+## Build the browser host
+
+The optional `web-canvas` feature targets `wasm32-unknown-unknown` and provides:
+
+- `Canvas2dHost` implementing the shared `RuntimeHost` contract.
+- Canvas 2D rendering of ordered backend-neutral draw commands.
+- Stable Foundation texture and audio IDs.
+- Browser keyboard normalization into two-player input snapshots.
+- WebAudio decoding, playback, looping, volume and stop operations.
+- `load_web_export()`, which reads `web-export.json`, resolves every resource relative to its URL, fetches it and registers the decoded resource.
+
+Build the browser target:
 
 ```sh
 rustup target add wasm32-unknown-unknown
 cargo check -p foundation-runtime --target wasm32-unknown-unknown --features web-canvas
 ```
 
-The feature is browser-only. SDL3 remains behind `native-sdl3` and is not compiled for `wasm32-unknown-unknown`.
+A consumer application typically builds its own crate with `wasm-pack build --target web` and enables the Foundation browser feature through its dependency feature. The consumer owns its browser entry page and animation loop; Foundation owns the platform host and shared resource contract.
 
-## Canvas host
+## Use the browser host
 
-Create the host around an existing HTML canvas element:
+Create the host around an existing canvas element:
 
 ```rust
 let config = RuntimeConfig {
@@ -36,118 +160,41 @@ let config = RuntimeConfig {
     pixel_art: true,
 };
 let host = Canvas2dHost::from_canvas_id("game-canvas", config)?;
+let assets = host.load_web_export("./web-export.json").await?;
 ```
 
-The host uses a Canvas 2D context. `present()` preserves command order, letterboxes the configured logical resolution, supports source rectangles and horizontal sprite flipping, and applies nearest-neighbor smoothing for pixel-art output.
+The browser application drives the host from its own `requestAnimationFrame` loop and calls the game simulation using the game's chosen timing policy. Display refresh rate must not silently become the simulation clock.
 
-The embedding page may resize the backing store using `resize_backing_store(css_width, css_height, device_pixel_ratio)`. It should call this after viewport, fullscreen, or device-pixel-ratio changes. The logical game size does not change.
+The embedding page can resize the backing store with `resize_backing_store(css_width, css_height, device_pixel_ratio)` after viewport, fullscreen or device-pixel-ratio changes. The logical game dimensions remain unchanged.
 
-The first browser input profile mirrors the native Street Chaves keyboard layout: player one uses arrows and Z/X/C/V; player two uses WASD and R/T/Y/U. F1-F5 and the numeric keypad provide the custom special-move slots. Escape requests quit and window blur releases held keys. Browser gamepad and pointer support remain separate capabilities and are reported as unavailable by this first adapter.
+The first browser input profile mirrors the Street Chaves two-player keyboard layout. Browser gamepad, pointer/touch, worker and OffscreenCanvas support are separate capabilities and are not implied by this host.
 
-## Exported-game asset package
+## Resource loading and decoding
 
-The host follows the familiar HTML5 export model used by Construct-style games: game resources are files shipped beside the exported page and described by a manifest. Native filesystem paths are never translated into browser URLs.
+The loader resolves `path` and each optional `fallbacks` entry relative to the manifest URL. Paths cannot escape the package directory with `..`. Resource IDs must be unique.
 
-A manifest uses schema version 1:
+- **Images:** PNG/BMP bytes are decoded into Foundation RGBA textures.
+- **Audio:** the current browser host uses `decodeAudioData()` and retains decoded WebAudio buffers. Codec support depends on the browser; declare explicit alternate encodings when needed.
+- **Data:** files are returned unchanged as byte arrays for game-specific parsing.
 
-```json
-{
-  "schema_version": 1,
-  "assets": [
-    { "id": "stage_01", "path": "assets/stage-01.bmp", "kind": "image" },
-    { "id": "fighter_chaves", "path": "assets/chaves.png", "kind": "image" },
-    {
-      "id": "fight_hit_01",
-      "path": "audio/hit-01.ogg",
-      "fallbacks": ["audio/hit-01.m4a", "audio/hit-01.wav"],
-      "volume_percent": 85,
-      "kind": "audio"
-    },
-    { "id": "fighter_config_chaves", "path": "data/C01.ini", "kind": "data" }
-  ]
-}
-```
+The catalog may organize effects and music in separate directories, but both currently use the same buffered audio registration path. Music streaming is **not** implemented by this host yet. A future streaming API must be a real capability with its own fetch/decode/playback lifecycle, not just a label in the manifest.
 
-Paths and optional `fallbacks` are resolved relative to the manifest URL, must be safe relative paths, and cannot escape the package directory with `..`. Resource IDs must be unique. Images are decoded from PNG/BMP into Foundation RGBA textures; audio files are decoded by the browser's `decodeAudioData()` implementation (for example WAV, OGG, MP3, or AAC/M4A where supported by that browser); data entries are returned unchanged as byte arrays so the consuming game can parse INI or other configuration formats. Alternate audio encodings can be listed in `fallbacks`, matching the multi-format packaging pattern used by HTML5 game exporters. The loader tries each source until one fetches and decodes successfully.
+All resources are fetched once and retained behind stable IDs. HTTP, CORS, UTF-8, manifest and decode failures are surfaced as errors. Serve the package over HTTP(S) and configure suitable CORS headers when assets are hosted on another origin.
 
-Load the manifest asynchronously:
+## Host responsibilities and current limits
 
-```rust
-let assets = host.load_asset_manifest("assets/street-chaves-manifest.json").await?;
-let stage_texture = assets.textures["stage_01"];
-let hit_clip = assets.audio_clips["fight_hit_01"];
-let fighter_ini = std::str::from_utf8(&assets.data["fighter_config_chaves"])?;
-```
+Foundation provides browser display, input normalization, resource loading/decoding and audio dispatch. The consumer remains responsible for:
 
-All resources are fetched once and retained behind stable IDs. The web host reports HTTP, CORS, UTF-8, manifest, and decode failures instead of silently substituting arbitrary assets. The export/deployment must serve these resources from the same origin or configure suitable CORS headers.
+- Game simulation, deterministic/fixed-step timing and state transitions.
+- Mapping game-specific IDs and metadata to Foundation resource IDs.
+- Starting/resuming WebAudio from a user gesture where the browser requires it.
+- Canvas viewport resize, fullscreen and application lifecycle.
+- Generating the consumer's WASM module and JavaScript glue.
 
-This loader is generic. StreetChavesRust remains responsible for interpreting its Pascal resource-bank rules, sprite pivots, atlas frames, and fighter metadata. User-supplied custom-character packages can continue to use the existing browser package bridge and the same asset ID/resource registration path.
+Current implementation limits:
 
-### Construct 3 Web export layout
-
-The schema also accepts optional `package` metadata for a published Construct 3
-Web export. This describes the export profile while leaving each asset's
-relative path explicit:
-
-```json
-{
-  "schema_version": 1,
-  "package": {
-    "format": "construct3_web",
-    "export_mode": "folders",
-    "media_folder": "media/"
-  },
-  "assets": [
-    { "id": "hero_idle", "path": "images/Hero/Idle.webp", "kind": "image" },
-    { "id": "hit", "path": "media/Sounds/Hit.ogg", "kind": "audio" },
-    { "id": "theme", "path": "media/Music/Theme.m4a", "kind": "audio" }
-  ]
-}
-```
-
-`export_mode` accepts `folders` or legacy `flat`. Paths preserve their
-original case and directory structure and are resolved relative to the
-manifest URL. The `media_folder` value is descriptive metadata only: it is
-not automatically prepended to paths. This avoids corrupting paths when an
-export already supplies a fully-qualified package-relative resource path.
-
-This is a **sidecar resource catalog**, not a parser for Construct's minified
-runtime internals. Construct can deduplicate and re-encode images, so an
-importer must map logical game resources to the actual files referenced by
-the export rather than guessing filenames. Music and sound entries are
-currently both decoded into WebAudio buffers by this host; streaming Music
-playback remains a separate capability and is not claimed here.
-
-## WebAudio
-
-The browser host decodes complete audio files with the browser's native WebAudio decoder into floating-point AudioBuffers, then applies the requested volume percentage with a per-voice GainNode. Playback uses `AudioBufferSourceNode` instances connected to the host AudioContext. The actual encoded format depends on the browser's supported codecs; exporters should provide fallback encodings for browsers with different codec support.
-
-The adapter preserves the current clip-level behavior:
-
-- A repeated `AudioClipId` stops the previous voice and starts again at the beginning.
-- Music requests can loop.
-- Stopping one clip leaves unrelated clips playing.
-- Stop-all stops every active voice.
-- The host caps tracked active voices at 48 and steals the oldest when full.
-
-The browser performs the final device mixing. This is not claimed to be bit-identical to the native S16 PCM mixer: WebAudio handles resampling and device output. The game-facing `AudioRequest` contract and Pascal clip/bank IDs remain shared.
-
-Browsers may suspend a newly created AudioContext until a user gesture. Call `resume_audio()` from the Start button's click/tap handler before the game begins playback. Audio unavailability is reported separately and does not prevent the game from rendering or simulating.
-
-## Host responsibilities
-
-The host deliberately does not own gameplay or the browser animation loop. It provides resource decoding/registration, normalized input, drawing and audio dispatch. The consumer remains responsible for:
-
-- Fixed-timestep game simulation and catch-up policy.
-- Resource semantics and mapping Pascal/game IDs to Foundation texture/audio IDs.
-- Starting/resuming audio from a user gesture.
-- Canvas viewport resize and fullscreen lifecycle.
-- Loading and validating game-specific data assets.
-
-## Deferred work
-
-- WebGL 2 renderer and performance comparison.
-- AudioWorklet-backed deterministic PCM mixer, if precise sample-mixer parity is required.
-- Browser Gamepad API and pointer/touch mapping.
-- Worker/OffscreenCanvas host profile.
-- Device/context loss recovery and browser lifecycle smoke tests.
+- Canvas 2D is the browser renderer; WebGL is deferred.
+- WebAudio decodes complete files into buffers; streaming music is not available.
+- Browser gamepad and pointer/touch mappings are not implemented.
+- There is no ZIP publisher, HTML shell generator, media transcoder or automatic asset optimizer in this slice.
+- Browser output is not claimed to be bit-identical to the native S16 PCM mixer.
