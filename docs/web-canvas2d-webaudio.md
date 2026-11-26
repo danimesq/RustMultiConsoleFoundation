@@ -172,6 +172,8 @@ profile = "release"
 [web]
 title = "Street Chaves"
 canvas-id = "street-chaves"
+audio-button-id = "enable-audio"
+diagnostics-id = "diagnostics"
 bootstrap = "web/main.js"
 
 [output]
@@ -207,7 +209,7 @@ cargo run -p foundation-packaging --bin foundation-web-build -- \
   --config FoundationWebBuild.toml
 ```
 
-The result is a deployable directory and ZIP archive. Foundation generates the HTML shell using the configured canvas ID and loads the consumer bootstrap as `main.js`. The bootstrap can create the game instance, load `web-export.json`, start the frame loop and handle browser audio activation. When no bootstrap is configured, Foundation emits a minimal module that initializes the wasm-bindgen output.
+The result is a deployable directory and ZIP archive. Foundation generates the HTML shell using the configured canvas ID and optional audio-activation/diagnostics element IDs, then loads the consumer bootstrap as `main.js`. These optional controls let a bootstrap such as StreetChaves' bind its audio resume button and report runtime diagnostics without supplying a consumer-owned HTML page. When no bootstrap is configured, Foundation emits a minimal module that initializes the wasm-bindgen output.
 
 The build configuration separates **source location** from **published location**. Source files are resolved under `assets-root`; published paths are package-relative and validated by Foundation. Optional `source-url` entries are retained in `web-build-provenance.json`, so packaged assets can keep direct links to their upstream files.
 
