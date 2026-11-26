@@ -123,6 +123,8 @@ struct BrowserInput {
 struct ActiveVoice {
     clip: AudioClipId,
     source: AudioBufferSourceNode,
+    /// Retain the connected volume node for the entire voice lifetime.
+    _gain: web_sys::GainNode,
     sequence: u64,
     looped: bool,
     ends_at: f64,
@@ -545,6 +547,7 @@ impl Canvas2dHost {
         self.active_voices.push(ActiveVoice {
             clip,
             source,
+            _gain: gain,
             sequence,
             looped,
             ends_at,
