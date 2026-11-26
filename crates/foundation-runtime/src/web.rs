@@ -55,6 +55,9 @@ pub enum WebAssetKind {
 pub struct LoadedWebAssets {
     pub textures: HashMap<String, TextureId>,
     pub audio_clips: HashMap<String, AudioClipId>,
+    /// Decoded RGBA images retained for game-specific atlas slicing and metadata.
+    pub images: HashMap<String, RgbaImage>,
+    /// Raw bytes for INI files and other game-specific data assets.
     pub data: HashMap<String, Vec<u8>>,
 }
 
@@ -356,10 +359,7 @@ impl Canvas2dHost {
 
     /// Decode PNG/BMP bytes and register a browser-owned texture.
     pub fn register_image_bytes(&mut self, bytes: &[u8]) -> Result<TextureId, RuntimeError> {
-        let decoded = image::load_from_memory(bytes)
-            .map_err(|error| RuntimeError::Host(format!("image decode failed: {error}")))?
-            .to_rgba8();
-        let image = RgbaImage::new(decoded.width(), decoded.height(), decoded.into_raw())?;
+        let image = decode_image_bytes(bytes)?;
         self.register_texture(&image)
     }
 
@@ -461,8 +461,10 @@ impl Canvas2dHost {
             let bytes = fetch_bytes(&self.window, &url.href()).await?;
             match asset.kind {
                 WebAssetKind::Image => {
-                    let id = self.register_image_bytes(&bytes)?;
-                    loaded.textures.insert(asset.id, id);
+                    let image = decode_image_bytes(&bytes)?;
+                    let id = self.register_texture(&image)?;
+                    loaded.textures.insert(asset.id.clone(), id);
+                    loaded.images.insert(asset.id, image);
                 }
                 WebAssetKind::Audio => {
                     let id = self.register_wav_bytes(&bytes, 100)?;
@@ -769,6 +771,14 @@ impl Drop for Canvas2dHost {
         );
         self.stop_all_voices();
     }
+}
+
+
+fn decode_image_bytes(bytes: &[u8]) -> Result<RgbaImage, RuntimeError> {
+    let decoded = image::load_from_memory(bytes)
+        .map_err(|error| RuntimeError::Host(format!("image decode failed: {error}")))?
+        .to_rgba8();
+    RgbaImage::new(decoded.width(), decoded.height(), decoded.into_raw())
 }
 
 async fn fetch_bytes(window: &Window, url: &str) -> Result<Vec<u8>, RuntimeError> {
