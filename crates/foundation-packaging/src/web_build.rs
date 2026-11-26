@@ -73,6 +73,10 @@ pub struct WebBuildWeb {
     /// Consumer-provided JS entry module. If omitted, Foundation generates a
     /// minimal module that initializes wasm-bindgen output.
     pub bootstrap: Option<PathBuf>,
+    /// Optional user-gesture button rendered by Foundation's generated HTML shell.
+    pub audio_button_id: Option<String>,
+    /// Optional live diagnostics element rendered by Foundation's generated HTML shell.
+    pub diagnostics_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -311,7 +315,12 @@ pub fn build_web_from_file(
     let generated_html = temporary_root.join("index.html");
     fs::write(
         &generated_html,
-        generate_html(&config.web.title, &config.web.canvas_id),
+        generate_html(
+            &config.web.title,
+            &config.web.canvas_id,
+            config.web.audio_button_id.as_deref(),
+            config.web.diagnostics_id.as_deref(),
+        ),
     )?;
     let generated_bootstrap = temporary_root.join("main.js");
     if let Some(bootstrap) = &config.web.bootstrap {
@@ -430,6 +439,14 @@ fn validate_config(config: &WebBuildConfig) -> Result<(), Box<dyn Error>> {
     }
     if config.web.title.trim().is_empty() || config.web.canvas_id.trim().is_empty() {
         return Err(io::Error::new(io::ErrorKind::InvalidInput, "web.title and web.canvas-id are required").into());
+    }
+    for (label, id) in [
+        ("web.audio-button-id", config.web.audio_button_id.as_deref()),
+        ("web.diagnostics-id", config.web.diagnostics_id.as_deref()),
+    ] {
+        if id.is_some_and(|value| value.trim().is_empty()) {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, format!("{label} cannot be empty")).into());
+        }
     }
     let mut ids = std::collections::HashSet::new();
     for asset in &config.assets {
@@ -586,11 +603,32 @@ fn ensure_success(program: &str, output: Output) -> Result<(), Box<dyn Error>> {
     .into())
 }
 
-fn generate_html(title: &str, canvas_id: &str) -> String {
+fn generate_html(
+    title: &str,
+    canvas_id: &str,
+    audio_button_id: Option<&str>,
+    diagnostics_id: Option<&str>,
+) -> String {
     let title = escape_html(title);
     let canvas_id = escape_html(canvas_id);
+    let audio_button = audio_button_id
+        .map(|id| {
+            format!(
+                "    <button id=\"{}\" type=\"button\">Enable audio</button>\\n",
+                escape_html(id)
+            )
+        })
+        .unwrap_or_default();
+    let diagnostics = diagnostics_id
+        .map(|id| {
+            format!(
+                "    <pre id=\"{}\" aria-live=\"polite\"></pre>\\n",
+                escape_html(id)
+            )
+        })
+        .unwrap_or_default();
     format!(
-        "<!doctype html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"utf-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n  <title>{title}</title>\n  <style>\n    html, body {{ margin: 0; min-height: 100%; background: #101522; }}\n    body {{ min-height: 100vh; display: grid; place-items: center; }}\n    canvas {{ display: block; width: min(100vw, 133.333vh); aspect-ratio: 4 / 3; image-rendering: pixelated; }}\n  </style>\n</head>\n<body>\n  <canvas id=\"{canvas_id}\" width=\"400\" height=\"300\"></canvas>\n  <script type=\"module\" src=\"./main.js\"></script>\n</body>\n</html>\n"
+        "<!doctype html>\\n<html lang=\"en\">\\n<head>\\n  <meta charset=\"utf-8\">\\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\\n  <title>{title}</title>\\n  <style>\\n    html, body {{ margin: 0; min-height: 100%; background: #101522; }}\\n    body {{ min-height: 100vh; display: grid; place-items: center; }}\\n    main {{ display: grid; justify-items: center; gap: 1rem; }}\\n    canvas {{ display: block; width: min(100vw, 133.333vh); aspect-ratio: 4 / 3; image-rendering: pixelated; }}\\n  </style>\\n</head>\\n<body>\\n  <main>\\n    <canvas id=\"{canvas_id}\" width=\"400\" height=\"300\"></canvas>\\n{audio_button}{diagnostics}  </main>\\n  <script type=\"module\" src=\"./main.js\"></script>\\n</body>\\n</html>\\n"
     )
 }
 
@@ -675,10 +713,12 @@ mod tests {
 
     #[test]
     fn generates_html_with_escaped_title_and_canvas_id() {
-        let html = generate_html("Game <Night>", "game&canvas");
+        let html = generate_html("Game <Night>", "game&canvas", Some("enable-audio"), Some("diagnostics"));
         assert!(html.contains("Game &lt;Night&gt;"));
         assert!(html.contains("id=\"game&amp;canvas\""));
         assert!(html.contains("./main.js"));
+        assert!(html.contains("id=\"enable-audio\""));
+        assert!(html.contains("id=\"diagnostics\""));
     }
 
     #[test]
