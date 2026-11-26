@@ -951,3 +951,56 @@ fn rgba_css(rgba: [u8; 4]) -> String {
 fn js_error(error: JsValue) -> RuntimeError {
     RuntimeError::Host(error.as_string().unwrap_or_else(|| format!("{error:?}")))
 }
+
+
+#[cfg(test)]
+mod construct_web_export_metadata_tests {
+    use super::*;
+
+    #[test]
+    fn accepts_construct_folders_export_metadata_and_nested_paths() {
+        let json = r#"{
+            "schema_version": 1,
+            "package": {
+                "format": "construct3_web",
+                "export_mode": "folders",
+                "media_folder": "media/"
+            },
+            "assets": [
+                {"id":"hero.idle","path":"images/Hero/Idle.webp","kind":"image"},
+                {"id":"hit","path":"media/Sounds/Hit.ogg","kind":"audio"},
+                {"id":"theme","path":"media/Music/Theme.m4a","kind":"audio"}
+            ]
+        }"#;
+        let manifest = WebAssetManifest::parse(json).unwrap();
+        assert_eq!(manifest.assets[0].path, "images/Hero/Idle.webp");
+        assert_eq!(manifest.assets[1].path, "media/Sounds/Hit.ogg");
+        assert_eq!(manifest.assets[2].path, "media/Music/Theme.m4a");
+    }
+
+    #[test]
+    fn rejects_unknown_construct_export_modes() {
+        let json = r#"{
+            "schema_version": 1,
+            "package": {
+                "format": "construct3_web",
+                "export_mode": "mystery"
+            },
+            "assets": []
+        }"#;
+        assert!(WebAssetManifest::parse(json).is_err());
+    }
+
+    #[test]
+    fn rejects_unsafe_construct_media_folder() {
+        let json = r#"{
+            "schema_version": 1,
+            "package": {
+                "format": "construct3_web",
+                "media_folder": "../outside/"
+            },
+            "assets": []
+        }"#;
+        assert!(WebAssetManifest::parse(json).is_err());
+    }
+}
