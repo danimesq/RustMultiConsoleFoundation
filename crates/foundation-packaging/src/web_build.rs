@@ -13,7 +13,7 @@ use serde::Deserialize;
 use std::error::Error;
 use std::ffi::OsStr;
 use std::fs::{self, File};
-use std::io::{self, Read, Write};
+use std::io::{self};
 use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -205,7 +205,7 @@ pub fn build_web_from_file(
         .join(profile_directory)
         .join(format!("{}.wasm", config.build.crate_name));
 
-    run_cargo_build(&config, &cargo_manifest, &target_dir)?;
+    run_cargo_build(&config, &project_root, &cargo_manifest, &target_dir)?;
     if !wasm_path.is_file() {
         return Err(io::Error::new(
             io::ErrorKind::NotFound,
@@ -223,7 +223,7 @@ pub fn build_web_from_file(
     let generated_package = temporary_root.join("pkg");
     fs::create_dir_all(&generated_package)?;
 
-    run_wasm_bindgen(&config, &wasm_path, &generated_package)?;
+    run_wasm_bindgen(&config, &project_root, &wasm_path, &generated_package)?;
 
     let javascript_name = format!("{}.js", config.build.crate_name);
     let wasm_name = format!("{}_bg.wasm", config.build.crate_name);
@@ -247,6 +247,7 @@ pub fn build_web_from_file(
     })?;
     fs::create_dir_all(output_parent)?;
     let staged_output = unique_sibling_path(&output_directory, "staging");
+    let _staged_output = TemporaryDirectory(staged_output.clone());
     let mut builder = WebExportBuilder::new(
         config.application.id.clone(),
         config.application.name.clone(),
@@ -269,7 +270,7 @@ pub fn build_web_from_file(
         if let Some(volume) = asset.volume_percent {
             published_asset = published_asset.with_volume_percent(volume);
         }
-        for fallback in &asset.fallbacks {
+        if !asset.fallbacks.is_empty() {
             published_asset = published_asset.with_fallbacks(
                 asset.fallbacks.iter().map(|fallback| fallback.path.clone()),
             );
@@ -472,6 +473,7 @@ fn resolve_from(root: &Path, path: &Path) -> PathBuf {
 
 fn run_cargo_build(
     config: &WebBuildConfig,
+    project_root: &Path,
     cargo_manifest: &Path,
     target_dir: &Path,
 ) -> Result<(), Box<dyn Error>> {
@@ -496,7 +498,7 @@ fn run_cargo_build(
     }
 
     let output = command
-        .current_dir(&config.build.project_dir)
+        .current_dir(project_root)
         .output()
         .map_err(|error| {
             io::Error::new(
@@ -510,6 +512,7 @@ fn run_cargo_build(
 
 fn run_wasm_bindgen(
     config: &WebBuildConfig,
+    project_root: &Path,
     wasm_path: &Path,
     output_directory: &Path,
 ) -> Result<(), Box<dyn Error>> {
@@ -522,7 +525,7 @@ fn run_wasm_bindgen(
         .arg("--out-name")
         .arg(&config.build.crate_name)
         .arg("--no-typescript")
-        .current_dir(&config.build.project_dir)
+        .current_dir(project_root)
         .output()
         .map_err(|error| {
             io::Error::new(
@@ -662,6 +665,7 @@ mod tests {
     fn parses_a_source_driven_web_build_config() {
         let config = r#"
 schema-version = 1
+assets-root = "assets"
 
 [application]
 id = "demo-game"
