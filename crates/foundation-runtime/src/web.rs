@@ -25,6 +25,10 @@ use web_sys::{
 
 const MAX_AUDIO_VOICES: usize = 48;
 
+fn default_asset_volume() -> i32 {
+    100
+}
+
 /// Manifest format for resources shipped beside an exported HTML5 game.
 #[derive(Debug, Clone, Deserialize)]
 pub struct WebAssetManifest {
@@ -40,6 +44,10 @@ pub struct WebAssetEntry {
     /// Optional alternate encodings/URLs, tried in order when the primary fails.
     #[serde(default)]
     pub fallbacks: Vec<String>,
+    /// Audio gain percentage, clamped to the shared 0..=400 range.
+    /// Ignored for image/data entries; defaults to the native game's 100% baseline.
+    #[serde(default = "default_asset_volume")]
+    pub volume_percent: i32,
     pub kind: WebAssetKind,
 }
 
@@ -462,7 +470,9 @@ impl Canvas2dHost {
                             loaded.images.insert(asset.id.clone(), image);
                         }
                         WebAssetKind::Audio => {
-                            let id = self.register_audio_bytes(&bytes, 100).await?;
+                            let id = self
+                                .register_audio_bytes(&bytes, asset.volume_percent)
+                                .await?;
                             loaded.audio_clips.insert(asset.id.clone(), id);
                         }
                         WebAssetKind::Data => {
