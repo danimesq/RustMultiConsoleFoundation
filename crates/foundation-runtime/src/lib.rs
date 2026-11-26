@@ -112,6 +112,86 @@ pub struct PlayerInputSnapshot {
     pub released_buttons: u32,
 }
 
+
+/// Physical keyboard key captured for remapping and arcade controls.
+///
+/// Values are platform-neutral names for the physical key position, not translated
+/// characters. Native SDL and browser KeyboardEvent.code adapters map to this enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PhysicalKey {
+    A, B, C, D, E, F, G, H, I, J, K, L, M,
+    N, O, P, Q, R, S, T, U, V, W, X, Y, Z,
+    Digit0, Digit1, Digit2, Digit3, Digit4, Digit5, Digit6, Digit7, Digit8, Digit9,
+    ArrowUp, ArrowDown, ArrowLeft, ArrowRight,
+    Numpad0, Numpad1, Numpad2, Numpad3, Numpad4,
+    Numpad5, Numpad6, Numpad7, Numpad8, Numpad9,
+    F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12,
+}
+
+impl PhysicalKey {
+    /// Stable user-facing label for settings screens and diagnostics.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::A => "A", Self::B => "B", Self::C => "C", Self::D => "D",
+            Self::E => "E", Self::F => "F", Self::G => "G", Self::H => "H",
+            Self::I => "I", Self::J => "J", Self::K => "K", Self::L => "L",
+            Self::M => "M", Self::N => "N", Self::O => "O", Self::P => "P",
+            Self::Q => "Q", Self::R => "R", Self::S => "S", Self::T => "T",
+            Self::U => "U", Self::V => "V", Self::W => "W", Self::X => "X",
+            Self::Y => "Y", Self::Z => "Z",
+            Self::Digit0 => "0", Self::Digit1 => "1", Self::Digit2 => "2",
+            Self::Digit3 => "3", Self::Digit4 => "4", Self::Digit5 => "5",
+            Self::Digit6 => "6", Self::Digit7 => "7", Self::Digit8 => "8",
+            Self::Digit9 => "9",
+            Self::ArrowUp => "UP", Self::ArrowDown => "DOWN",
+            Self::ArrowLeft => "LEFT", Self::ArrowRight => "RIGHT",
+            Self::Numpad0 => "NUM 0", Self::Numpad1 => "NUM 1",
+            Self::Numpad2 => "NUM 2", Self::Numpad3 => "NUM 3",
+            Self::Numpad4 => "NUM 4", Self::Numpad5 => "NUM 5",
+            Self::Numpad6 => "NUM 6", Self::Numpad7 => "NUM 7",
+            Self::Numpad8 => "NUM 8", Self::Numpad9 => "NUM 9",
+            Self::F1 => "F1", Self::F2 => "F2", Self::F3 => "F3",
+            Self::F4 => "F4", Self::F5 => "F5", Self::F6 => "F6",
+            Self::F7 => "F7", Self::F8 => "F8", Self::F9 => "F9",
+            Self::F10 => "F10", Self::F11 => "F11", Self::F12 => "F12",
+        }
+    }
+}
+
+/// Eight physical keys used by player one: directions followed by four attacks.
+///
+/// The order is UP, DOWN, LEFT, RIGHT, WEAK PUNCH, WEAK KICK,
+/// STRONG PUNCH, STRONG KICK. Player two keeps its default host layout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlayerOneKeyMap {
+    pub keys: [PhysicalKey; 8],
+}
+
+impl Default for PlayerOneKeyMap {
+    fn default() -> Self {
+        Self {
+            keys: [
+                PhysicalKey::ArrowUp, PhysicalKey::ArrowDown,
+                PhysicalKey::ArrowLeft, PhysicalKey::ArrowRight,
+                PhysicalKey::Z, PhysicalKey::X, PhysicalKey::C, PhysicalKey::V,
+            ],
+        }
+    }
+}
+
+impl PlayerOneKeyMap {
+    /// Return the P1 action index assigned to a captured physical key.
+    pub fn action_index(self, key: PhysicalKey) -> Option<usize> {
+        self.keys.iter().position(|candidate| *candidate == key)
+    }
+
+    /// Return whether the map is collision-free.
+    pub fn has_unique_keys(self) -> bool {
+        let mut unique = std::collections::HashSet::new();
+        self.keys.into_iter().all(|key| unique.insert(key))
+    }
+}
+
 /// Input snapshot for one runtime frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct InputSnapshot {
@@ -125,6 +205,8 @@ pub struct InputSnapshot {
     pub pointer_y: i32,
     pub pointer_primary: ButtonState,
     pub quit_requested: bool,
+    /// Most recent non-repeat physical key press, used by arcade menus/remapping.
+    pub physical_key_pressed: Option<PhysicalKey>,
     /// Two normalized player slots, independent of keyboard/controller layout.
     pub players: [PlayerInputSnapshot; 2],
 }
@@ -255,6 +337,9 @@ pub trait RuntimeHost {
     ///
     /// Default no-op keeps existing consumer host implementations source-compatible.
     fn reset_input_after_pause(&mut self) {}
+
+    /// Replace player one's keyboard layout. Hosts without a keyboard may ignore it.
+    fn set_player_one_key_map(&mut self, _map: PlayerOneKeyMap) {}
 }
 
 /// Resource registration contract shared by native and browser renderer hosts.

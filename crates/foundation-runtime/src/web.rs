@@ -6,8 +6,8 @@
 
 use crate::{
     AudioClipId, AudioRequest, ButtonState, Capabilities, CapabilityStatus, DrawCommand,
-    FrameOutput, InputSnapshot, PadDirection, PlayerInputSnapshot, Rect, RgbaImage,
-    RuntimeConfig, RuntimeError, RuntimeHost, TextureId,
+    FrameOutput, InputSnapshot, PadDirection, PhysicalKey, PlayerInputSnapshot, PlayerOneKeyMap,
+    Rect, RgbaImage, RuntimeConfig, RuntimeError, RuntimeHost, TextureId,
 };
 use js_sys::{ArrayBuffer, Function, Reflect, Uint8Array};
 use crate::web_export::{validate_web_export_path, WebAssetKind, WebExportManifest};
@@ -30,6 +30,8 @@ struct BrowserInput {
     held: HashSet<String>,
     pressed: [u32; 2],
     released: [u32; 2],
+    pending_physical_key: Option<PhysicalKey>,
+    p1_key_map: PlayerOneKeyMap,
     quit_requested: bool,
 }
 
@@ -117,15 +119,13 @@ impl Canvas2dHost {
         let key_down = Closure::<dyn FnMut(Event)>::new(move |event: Event| {
             if let Some(keyboard) = event.dyn_ref::<KeyboardEvent>() {
                 let code = keyboard.code();
-                if matches!(
-                    code.as_str(),
-                    "ArrowUp" | "ArrowDown" | "ArrowLeft" | "ArrowRight"
-                        | "KeyZ" | "KeyX" | "KeyC" | "KeyV"
-                        | "KeyW" | "KeyA" | "KeyS" | "KeyD"
-                        | "KeyR" | "KeyT" | "KeyY" | "KeyU"
-                        | "F1" | "F2" | "F3" | "F4" | "F5"
-                        | "Numpad1" | "Numpad2" | "Numpad3" | "Numpad4" | "Numpad5"
-                ) {
+                if code.starts_with("Key")
+                    || code.starts_with("Digit")
+                    || code.starts_with("Numpad")
+                    || code.starts_with("Arrow")
+                    || code.starts_with("F")
+                    || matches!(code.as_str(), "Escape" | "Space" | "Enter" | "Tab" | "Backspace")
+                {
                     keyboard.prevent_default();
                 }
                 let mut state = down_state.borrow_mut();
@@ -134,7 +134,8 @@ impl Canvas2dHost {
                 } else {
                     let is_new = state.held.insert(code.clone());
                     if is_new && !keyboard.repeat() {
-                        if let Some((player, slot)) = key_binding(&code) {
+                        state.pending_physical_key = physical_key(&code);
+                        if let Some((player, slot)) = key_binding(&code, state.p1_key_map) {
                             state.pressed[player] |= 1_u32 << slot;
                         }
                     }
@@ -148,7 +149,7 @@ impl Canvas2dHost {
                 let code = keyboard.code();
                 let mut state = up_state.borrow_mut();
                 if state.held.remove(&code) {
-                    if let Some((player, slot)) = key_binding(&code) {
+                    if let Some((player, slot)) = key_binding(&code, state.p1_key_map) {
                         state.released[player] |= 1_u32 << slot;
                     }
                 }
@@ -160,7 +161,7 @@ impl Canvas2dHost {
             let mut state = blur_state.borrow_mut();
             let held = std::mem::take(&mut state.held);
             for code in held {
-                if let Some((player, slot)) = key_binding(&code) {
+                if let Some((player, slot)) = key_binding(&code, state.p1_key_map) {
                     state.released[player] |= 1_u32 << slot;
                 }
             }
@@ -538,7 +539,7 @@ impl Canvas2dHost {
         let mut state = self.input.borrow_mut();
         let held = std::mem::take(&mut state.held);
         for code in held {
-            if let Some((player, slot)) = key_binding(&code) {
+            if let Some((player, slot)) = key_binding(&code, state.p1_key_map) {
                 state.released[player] |= 1_u32 << slot;
             }
         }
@@ -547,12 +548,13 @@ impl Canvas2dHost {
     fn input_snapshot(&mut self) -> InputSnapshot {
         let mut state = self.input.borrow_mut();
         let players = std::array::from_fn(|player| PlayerInputSnapshot {
-            direction: direction_for(&state.held, player),
-            held_buttons: held_mask(&state.held, player),
+            direction: direction_for(&state.held, player, state.p1_key_map),
+            held_buttons: held_mask(&state.held, player, state.p1_key_map),
             pressed_buttons: std::mem::take(&mut state.pressed[player]),
             released_buttons: std::mem::take(&mut state.released[player]),
         });
         let p1 = players[0];
+        let physical_key_pressed = state.pending_physical_key.take();
         let vertical_up = matches!(p1.direction, PadDirection::Up | PadDirection::UpLeft | PadDirection::UpRight);
         let vertical_down = matches!(p1.direction, PadDirection::Down | PadDirection::DownLeft | PadDirection::DownRight);
         let horizontal_left = matches!(p1.direction, PadDirection::Left | PadDirection::UpLeft | PadDirection::DownLeft);
@@ -570,6 +572,7 @@ impl Canvas2dHost {
             confirm: button(0),
             cancel: button(1),
             quit_requested: state.quit_requested,
+            physical_key_pressed,
             players,
             ..Default::default()
         }
@@ -583,6 +586,11 @@ impl crate::TextureRegistrar for Canvas2dHost {
 }
 
 impl RuntimeHost for Canvas2dHost {
+    fn set_player_one_key_map(&mut self, map: PlayerOneKeyMap) {
+        self.release_all_held_keys();
+        self.input.borrow_mut().p1_key_map = map;
+    }
+
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             display: CapabilityStatus::Available,
@@ -777,48 +785,80 @@ async fn fetch_bytes(window: &Window, url: &str) -> Result<Vec<u8>, RuntimeError
     Ok(Uint8Array::new(&buffer).to_vec())
 }
 
-fn key_binding(code: &str) -> Option<(usize, u8)> {
+fn physical_key(code: &str) -> Option<PhysicalKey> {
     Some(match code {
-        "KeyZ" => (0, 0),
-        "KeyX" => (0, 1),
-        "KeyC" => (0, 2),
-        "KeyV" => (0, 3),
-        "F1" => (0, 8),
-        "F2" => (0, 9),
-        "F3" => (0, 10),
-        "F4" => (0, 11),
-        "F5" => (0, 12),
-        "KeyR" => (1, 0),
-        "KeyT" => (1, 1),
-        "KeyY" => (1, 2),
-        "KeyU" => (1, 3),
-        "Numpad1" => (1, 8),
-        "Numpad2" => (1, 9),
-        "Numpad3" => (1, 10),
-        "Numpad4" => (1, 11),
-        "Numpad5" => (1, 12),
+        "KeyA" => PhysicalKey::A, "KeyB" => PhysicalKey::B,
+        "KeyC" => PhysicalKey::C, "KeyD" => PhysicalKey::D,
+        "KeyE" => PhysicalKey::E, "KeyF" => PhysicalKey::F,
+        "KeyG" => PhysicalKey::G, "KeyH" => PhysicalKey::H,
+        "KeyI" => PhysicalKey::I, "KeyJ" => PhysicalKey::J,
+        "KeyK" => PhysicalKey::K, "KeyL" => PhysicalKey::L,
+        "KeyM" => PhysicalKey::M, "KeyN" => PhysicalKey::N,
+        "KeyO" => PhysicalKey::O, "KeyP" => PhysicalKey::P,
+        "KeyQ" => PhysicalKey::Q, "KeyR" => PhysicalKey::R,
+        "KeyS" => PhysicalKey::S, "KeyT" => PhysicalKey::T,
+        "KeyU" => PhysicalKey::U, "KeyV" => PhysicalKey::V,
+        "KeyW" => PhysicalKey::W, "KeyX" => PhysicalKey::X,
+        "KeyY" => PhysicalKey::Y, "KeyZ" => PhysicalKey::Z,
+        "Digit0" => PhysicalKey::Digit0, "Digit1" => PhysicalKey::Digit1,
+        "Digit2" => PhysicalKey::Digit2, "Digit3" => PhysicalKey::Digit3,
+        "Digit4" => PhysicalKey::Digit4, "Digit5" => PhysicalKey::Digit5,
+        "Digit6" => PhysicalKey::Digit6, "Digit7" => PhysicalKey::Digit7,
+        "Digit8" => PhysicalKey::Digit8, "Digit9" => PhysicalKey::Digit9,
+        "ArrowUp" => PhysicalKey::ArrowUp, "ArrowDown" => PhysicalKey::ArrowDown,
+        "ArrowLeft" => PhysicalKey::ArrowLeft, "ArrowRight" => PhysicalKey::ArrowRight,
+        "Numpad0" => PhysicalKey::Numpad0, "Numpad1" => PhysicalKey::Numpad1,
+        "Numpad2" => PhysicalKey::Numpad2, "Numpad3" => PhysicalKey::Numpad3,
+        "Numpad4" => PhysicalKey::Numpad4, "Numpad5" => PhysicalKey::Numpad5,
+        "Numpad6" => PhysicalKey::Numpad6, "Numpad7" => PhysicalKey::Numpad7,
+        "Numpad8" => PhysicalKey::Numpad8, "Numpad9" => PhysicalKey::Numpad9,
+        "F1" => PhysicalKey::F1, "F2" => PhysicalKey::F2, "F3" => PhysicalKey::F3,
+        "F4" => PhysicalKey::F4, "F5" => PhysicalKey::F5, "F6" => PhysicalKey::F6,
+        "F7" => PhysicalKey::F7, "F8" => PhysicalKey::F8, "F9" => PhysicalKey::F9,
+        "F10" => PhysicalKey::F10, "F11" => PhysicalKey::F11, "F12" => PhysicalKey::F12,
         _ => return None,
     })
 }
 
-fn held_mask(held: &HashSet<String>, player: usize) -> u32 {
+fn key_binding(code: &str, map: PlayerOneKeyMap) -> Option<(usize, u8)> {
+    let key = physical_key(code)?;
+    if let Some(action) = map.action_index(key) {
+        if action >= 4 {
+            return Some((0, (action - 4) as u8));
+        }
+    }
+    Some(match code {
+        "F1" => (0, 8), "F2" => (0, 9), "F3" => (0, 10),
+        "F4" => (0, 11), "F5" => (0, 12),
+        "KeyR" => (1, 0), "KeyT" => (1, 1), "KeyY" => (1, 2), "KeyU" => (1, 3),
+        "Numpad1" => (1, 8), "Numpad2" => (1, 9), "Numpad3" => (1, 10),
+        "Numpad4" => (1, 11), "Numpad5" => (1, 12),
+        _ => return None,
+    })
+}
+
+fn held_mask(held: &HashSet<String>, player: usize, map: PlayerOneKeyMap) -> u32 {
     held.iter()
-        .filter_map(|key| key_binding(key))
+        .filter_map(|key| key_binding(key, map))
         .filter(|(owner, _)| *owner == player)
         .fold(0, |mask, (_, slot)| mask | (1_u32 << slot))
 }
 
-fn direction_for(held: &HashSet<String>, player: usize) -> PadDirection {
+fn direction_for(held: &HashSet<String>, player: usize, map: PlayerOneKeyMap) -> PadDirection {
+    let is_down = |key: PhysicalKey| held.iter().any(|code| physical_key(code) == Some(key));
     let (up, down, left, right) = if player == 0 {
-        ("ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight")
+        (is_down(map.keys[0]), is_down(map.keys[1]), is_down(map.keys[2]), is_down(map.keys[3]))
     } else {
-        ("KeyW", "KeyS", "KeyA", "KeyD")
+        (
+            held.contains("KeyW"), held.contains("KeyS"),
+            held.contains("KeyA"), held.contains("KeyD"),
+        )
     };
     match (
-        held.contains(up),
-        held.contains(down),
-        held.contains(left),
-        held.contains(right),
+        up,
+        down,
+        left,
+        right,
     ) {
         (true, false, true, false) => PadDirection::UpLeft,
         (true, false, false, true) => PadDirection::UpRight,
@@ -829,6 +869,33 @@ fn direction_for(held: &HashSet<String>, player: usize) -> PadDirection {
         (false, false, true, false) => PadDirection::Left,
         (false, false, false, true) => PadDirection::Right,
         _ => PadDirection::Neutral,
+    }
+}
+
+#[cfg(test)]
+mod keyboard_mapping_tests {
+    use super::*;
+
+    #[test]
+    fn browser_physical_codes_match_shared_key_vocabulary() {
+        assert_eq!(physical_key("KeyQ"), Some(PhysicalKey::Q));
+        assert_eq!(physical_key("Digit5"), Some(PhysicalKey::Digit5));
+        assert_eq!(physical_key("Numpad2"), Some(PhysicalKey::Numpad2));
+        assert_eq!(physical_key("ArrowLeft"), Some(PhysicalKey::ArrowLeft));
+    }
+
+    #[test]
+    fn custom_player_one_map_drives_attack_slots_and_directions() {
+        let map = PlayerOneKeyMap {
+            keys: [
+                PhysicalKey::W, PhysicalKey::S, PhysicalKey::A, PhysicalKey::D,
+                PhysicalKey::J, PhysicalKey::K, PhysicalKey::U, PhysicalKey::I,
+            ],
+        };
+        assert_eq!(key_binding("KeyJ", map), Some((0, 0)));
+        assert_eq!(key_binding("KeyI", map), Some((0, 3)));
+        assert_eq!(direction_for(&HashSet::from(["KeyW".to_owned()]), 0, map), PadDirection::Up);
+        assert_eq!(direction_for(&HashSet::from(["KeyW".to_owned()]), 1, map), PadDirection::Up);
     }
 }
 

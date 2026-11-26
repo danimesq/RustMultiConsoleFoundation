@@ -6,8 +6,8 @@
 use crate::audio::{AudioMixer, SampleId, MIXER_CHANNELS, MIXER_RATE_HZ};
 use crate::{
     AudioClipId, AudioRequest, Capabilities, CapabilityStatus, DrawCommand, FrameOutput,
-    InputSnapshot, PadDirection, PlayerInputSnapshot, RgbaImage, RuntimeConfig,
-    RuntimeError, RuntimeHost, TextureId,
+    InputSnapshot, PadDirection, PhysicalKey, PlayerInputSnapshot, PlayerOneKeyMap, RgbaImage,
+    RuntimeConfig, RuntimeError, RuntimeHost, TextureId,
 };
 use sdl3::audio::{
     AudioCallback, AudioFormat, AudioSpec, AudioSpecWAV, AudioStream, AudioStreamWithCallback,
@@ -51,6 +51,8 @@ pub struct Sdl3Host {
     held_keys: HashSet<Scancode>,
     pending_pressed: [u32; 2],
     pending_released: [u32; 2],
+    pending_physical_key: Option<PhysicalKey>,
+    p1_key_map: PlayerOneKeyMap,
     next_texture_id: u64,
     next_clip_id: u64,
     quit_requested: bool,
@@ -116,6 +118,8 @@ impl Sdl3Host {
             held_keys: HashSet::new(),
             pending_pressed: [0; 2],
             pending_released: [0; 2],
+            pending_physical_key: None,
+            p1_key_map: PlayerOneKeyMap::default(),
             next_texture_id: 1,
             next_clip_id: 1,
             quit_requested: false,
@@ -248,32 +252,51 @@ impl Sdl3Host {
         Ok(id)
     }
 
-    /// Return the physical keyboard mapping used by the first Street Chaves port.
-    ///
-    /// Player 1 uses arrows + Z/X/C/V. Player 2 uses WASD + R/T/Y/U. The
-    /// five additional special slots use F1..F5 for player 1 and keypad 1..5 for player 2.
-    /// Direction keys are represented by PadDirection; attack buttons occupy slots 0..3.
-    fn key_binding(scancode: Scancode) -> Option<(usize, u8)> {
+    /// Resolve an SDL physical key to the platform-neutral physical-key vocabulary.
+    fn physical_key(scancode: Scancode) -> Option<PhysicalKey> {
+        use Scancode::*;
+        Some(match scancode {
+            A => PhysicalKey::A, B => PhysicalKey::B, C => PhysicalKey::C, D => PhysicalKey::D,
+            E => PhysicalKey::E, F => PhysicalKey::F, G => PhysicalKey::G, H => PhysicalKey::H,
+            I => PhysicalKey::I, J => PhysicalKey::J, K => PhysicalKey::K, L => PhysicalKey::L,
+            M => PhysicalKey::M, N => PhysicalKey::N, O => PhysicalKey::O, P => PhysicalKey::P,
+            Q => PhysicalKey::Q, R => PhysicalKey::R, S => PhysicalKey::S, T => PhysicalKey::T,
+            U => PhysicalKey::U, V => PhysicalKey::V, W => PhysicalKey::W, X => PhysicalKey::X,
+            Y => PhysicalKey::Y, Z => PhysicalKey::Z,
+            _0 => PhysicalKey::Digit0, _1 => PhysicalKey::Digit1,
+            _2 => PhysicalKey::Digit2, _3 => PhysicalKey::Digit3,
+            _4 => PhysicalKey::Digit4, _5 => PhysicalKey::Digit5,
+            _6 => PhysicalKey::Digit6, _7 => PhysicalKey::Digit7,
+            _8 => PhysicalKey::Digit8, _9 => PhysicalKey::Digit9,
+            Up => PhysicalKey::ArrowUp, Down => PhysicalKey::ArrowDown,
+            Left => PhysicalKey::ArrowLeft, Right => PhysicalKey::ArrowRight,
+            Kp0 => PhysicalKey::Numpad0, Kp1 => PhysicalKey::Numpad1,
+            Kp2 => PhysicalKey::Numpad2, Kp3 => PhysicalKey::Numpad3,
+            Kp4 => PhysicalKey::Numpad4, Kp5 => PhysicalKey::Numpad5,
+            Kp6 => PhysicalKey::Numpad6, Kp7 => PhysicalKey::Numpad7,
+            Kp8 => PhysicalKey::Numpad8, Kp9 => PhysicalKey::Numpad9,
+            F1 => PhysicalKey::F1, F2 => PhysicalKey::F2, F3 => PhysicalKey::F3,
+            F4 => PhysicalKey::F4, F5 => PhysicalKey::F5, F6 => PhysicalKey::F6,
+            F7 => PhysicalKey::F7, F8 => PhysicalKey::F8, F9 => PhysicalKey::F9,
+            F10 => PhysicalKey::F10, F11 => PhysicalKey::F11, F12 => PhysicalKey::F12,
+            _ => return None,
+        })
+    }
+
+    fn key_binding(&self, scancode: Scancode) -> Option<(usize, u8)> {
+        let key = Self::physical_key(scancode)?;
+        if let Some(action) = self.p1_key_map.action_index(key) {
+            if action >= 4 {
+                return Some((0, (action - 4) as u8));
+            }
+        }
         use Scancode::*;
         match scancode {
-            Z => Some((0, 0)),
-            X => Some((0, 1)),
-            C => Some((0, 2)),
-            V => Some((0, 3)),
-            F1 => Some((0, 8)),
-            F2 => Some((0, 9)),
-            F3 => Some((0, 10)),
-            F4 => Some((0, 11)),
-            F5 => Some((0, 12)),
-            R => Some((1, 0)),
-            T => Some((1, 1)),
-            Y => Some((1, 2)),
-            U => Some((1, 3)),
-            Kp1 => Some((1, 8)),
-            Kp2 => Some((1, 9)),
-            Kp3 => Some((1, 10)),
-            Kp4 => Some((1, 11)),
-            Kp5 => Some((1, 12)),
+            F1 => Some((0, 8)), F2 => Some((0, 9)), F3 => Some((0, 10)),
+            F4 => Some((0, 11)), F5 => Some((0, 12)),
+            R => Some((1, 0)), T => Some((1, 1)), Y => Some((1, 2)), U => Some((1, 3)),
+            Kp1 => Some((1, 8)), Kp2 => Some((1, 9)), Kp3 => Some((1, 10)),
+            Kp4 => Some((1, 11)), Kp5 => Some((1, 12)),
             _ => None,
         }
     }
@@ -281,21 +304,26 @@ impl Sdl3Host {
     fn held_mask(&self, player: usize) -> u32 {
         self.held_keys
             .iter()
-            .filter_map(|key| Self::key_binding(*key))
+            .filter_map(|key| self.key_binding(*key))
             .filter(|(owner, _)| *owner == player)
             .fold(0_u32, |mask, (_, slot)| mask | (1_u32 << slot))
     }
 
     fn direction_for(&self, player: usize) -> PadDirection {
-        let base = if player == 0 {
-            [Scancode::Up, Scancode::Down, Scancode::Left, Scancode::Right]
-        } else {
-            [Scancode::W, Scancode::S, Scancode::A, Scancode::D]
+        let is_down = |key: PhysicalKey| {
+            self.held_keys.iter().any(|scancode| Self::physical_key(*scancode) == Some(key))
         };
-        let up = self.held_keys.contains(&base[0]);
-        let down = self.held_keys.contains(&base[1]);
-        let left = self.held_keys.contains(&base[2]);
-        let right = self.held_keys.contains(&base[3]);
+        let (up, down, left, right) = if player == 0 {
+            (
+                is_down(self.p1_key_map.keys[0]), is_down(self.p1_key_map.keys[1]),
+                is_down(self.p1_key_map.keys[2]), is_down(self.p1_key_map.keys[3]),
+            )
+        } else {
+            (
+                self.held_keys.contains(&Scancode::W), self.held_keys.contains(&Scancode::S),
+                self.held_keys.contains(&Scancode::A), self.held_keys.contains(&Scancode::D),
+            )
+        };
         match (up, down, left, right) {
             (true, false, true, false) => PadDirection::UpLeft,
             (true, false, false, true) => PadDirection::UpRight,
@@ -311,7 +339,8 @@ impl Sdl3Host {
 
     fn apply_key_down(&mut self, scancode: Scancode, repeat: bool) {
         if self.held_keys.insert(scancode) && !repeat {
-            if let Some((player, slot)) = Self::key_binding(scancode) {
+            self.pending_physical_key = Self::physical_key(scancode);
+            if let Some((player, slot)) = self.key_binding(scancode) {
                 self.pending_pressed[player] |= 1_u32 << slot;
             }
         }
@@ -319,15 +348,17 @@ impl Sdl3Host {
 
     fn apply_key_up(&mut self, scancode: Scancode) {
         if self.held_keys.remove(&scancode) {
-            if let Some((player, slot)) = Self::key_binding(scancode) {
+            if let Some((player, slot)) = self.key_binding(scancode) {
                 self.pending_released[player] |= 1_u32 << slot;
             }
         }
     }
 
     fn reset_input(&mut self) {
-        for key in self.held_keys.drain() {
-            if let Some((player, slot)) = Self::key_binding(key) {
+        // End the mutable drain borrow before resolving keys through the current map.
+        let held: Vec<_> = self.held_keys.drain().collect();
+        for key in held {
+            if let Some((player, slot)) = self.key_binding(key) {
                 self.pending_released[player] |= 1_u32 << slot;
             }
         }
@@ -391,6 +422,11 @@ impl Sdl3Host {
 }
 
 impl RuntimeHost for Sdl3Host {
+    fn set_player_one_key_map(&mut self, map: PlayerOneKeyMap) {
+        self.reset_input();
+        self.p1_key_map = map;
+    }
+
     fn capabilities(&self) -> Capabilities {
         Capabilities {
             display: CapabilityStatus::Available,
@@ -448,6 +484,7 @@ impl RuntimeHost for Sdl3Host {
             pressed_buttons: std::mem::take(&mut self.pending_pressed[player]),
             released_buttons: std::mem::take(&mut self.pending_released[player]),
         });
+        let physical_key_pressed = self.pending_physical_key.take();
         let p1 = players[0];
         let direction = p1.direction;
         Ok(InputSnapshot {
@@ -482,6 +519,7 @@ impl RuntimeHost for Sdl3Host {
                 released: p1.released_buttons & (1 << 1) != 0,
             },
             quit_requested: self.quit_requested,
+            physical_key_pressed,
             players,
             ..Default::default()
         })
@@ -581,12 +619,12 @@ mod tests {
 
     #[test]
     fn keyboard_defaults_preserve_the_pascal_physical_layout() {
-        assert_eq!(Sdl3Host::key_binding(Scancode::Up), None);
-        assert_eq!(Sdl3Host::key_binding(Scancode::Z), Some((0, 0)));
-        assert_eq!(Sdl3Host::key_binding(Scancode::W), None);
-        assert_eq!(Sdl3Host::key_binding(Scancode::R), Some((1, 0)));
-        assert_eq!(Sdl3Host::key_binding(Scancode::F1), Some((0, 8)));
-        assert_eq!(Sdl3Host::key_binding(Scancode::Kp1), Some((1, 8)));
+        let host_map = PlayerOneKeyMap::default();
+        assert_eq!(Sdl3Host::physical_key(Scancode::Up), Some(PhysicalKey::ArrowUp));
+        assert_eq!(host_map.action_index(PhysicalKey::ArrowUp), Some(0));
+        assert_eq!(host_map.action_index(PhysicalKey::Z), Some(4));
+        assert_eq!(host_map.action_index(PhysicalKey::X), Some(5));
+        assert!(host_map.has_unique_keys());
     }
 
     #[test]
