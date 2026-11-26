@@ -83,6 +83,41 @@ All resources are fetched once and retained behind stable IDs. The web host repo
 
 This loader is generic. StreetChavesRust remains responsible for interpreting its Pascal resource-bank rules, sprite pivots, atlas frames, and fighter metadata. User-supplied custom-character packages can continue to use the existing browser package bridge and the same asset ID/resource registration path.
 
+### Construct 3 Web export layout
+
+The schema also accepts optional `package` metadata for a published Construct 3
+Web export. This describes the export profile while leaving each asset's
+relative path explicit:
+
+```json
+{
+  "schema_version": 1,
+  "package": {
+    "format": "construct3_web",
+    "export_mode": "folders",
+    "media_folder": "media/"
+  },
+  "assets": [
+    { "id": "hero_idle", "path": "images/Hero/Idle.webp", "kind": "image" },
+    { "id": "hit", "path": "media/Sounds/Hit.ogg", "kind": "audio" },
+    { "id": "theme", "path": "media/Music/Theme.m4a", "kind": "audio" }
+  ]
+}
+```
+
+`export_mode` accepts `folders` or legacy `flat`. Paths preserve their
+original case and directory structure and are resolved relative to the
+manifest URL. The `media_folder` value is descriptive metadata only: it is
+not automatically prepended to paths. This avoids corrupting paths when an
+export already supplies a fully-qualified package-relative resource path.
+
+This is a **sidecar resource catalog**, not a parser for Construct's minified
+runtime internals. Construct can deduplicate and re-encode images, so an
+importer must map logical game resources to the actual files referenced by
+the export rather than guessing filenames. Music and sound entries are
+currently both decoded into WebAudio buffers by this host; streaming Music
+playback remains a separate capability and is not claimed here.
+
 ## WebAudio
 
 The browser host decodes complete audio files with the browser's native WebAudio decoder into floating-point AudioBuffers, then applies the requested volume percentage with a per-voice GainNode. Playback uses `AudioBufferSourceNode` instances connected to the host AudioContext. The actual encoded format depends on the browser's supported codecs; exporters should provide fallback encodings for browsers with different codec support.

@@ -33,7 +33,25 @@ fn default_asset_volume() -> i32 {
 #[derive(Debug, Clone, Deserialize)]
 pub struct WebAssetManifest {
     pub schema_version: u32,
+    /// Optional package metadata. Construct 3 exports can declare their
+    /// directory mode and media folder without changing resource IDs/paths.
+    #[serde(default)]
+    pub package: Option<WebPackageMetadata>,
     pub assets: Vec<WebAssetEntry>,
+}
+
+/// Optional metadata describing the published web package layout.
+///
+/// Asset paths remain explicit and relative to the manifest URL. In
+/// particular, `media_folder` is descriptive metadata, not a path prefix
+/// silently applied to every asset.
+#[derive(Debug, Clone, Deserialize)]
+pub struct WebPackageMetadata {
+    pub format: String,
+    #[serde(default)]
+    pub export_mode: Option<String>,
+    #[serde(default)]
+    pub media_folder: Option<String>,
 }
 
 /// One resource with a stable ID and a path relative to the manifest URL.
@@ -77,6 +95,21 @@ impl WebAssetManifest {
             .map_err(|error| RuntimeError::Host(format!("invalid web asset manifest: {error}")))?;
         if manifest.schema_version != 1 {
             return Err(RuntimeError::Unsupported("web asset manifest schema version"));
+        }
+
+        if let Some(package) = &manifest.package {
+            if package.format != "construct3_web" {
+                return Err(RuntimeError::InvalidConfig("unsupported web package format"));
+            }
+            if let Some(mode) = &package.export_mode {
+                if mode != "folders" && mode != "flat" {
+                    return Err(RuntimeError::InvalidConfig("invalid Construct export mode"));
+                }
+            }
+            if let Some(folder) = &package.media_folder {
+                let normalized = folder.trim_end_matches('/');
+                validate_relative_asset_path(normalized)?;
+            }
         }
 
         let mut ids = HashSet::<String>::new();
@@ -917,4 +950,57 @@ fn rgba_css(rgba: [u8; 4]) -> String {
 
 fn js_error(error: JsValue) -> RuntimeError {
     RuntimeError::Host(error.as_string().unwrap_or_else(|| format!("{error:?}")))
+}
+
+
+#[cfg(test)]
+mod construct_web_export_metadata_tests {
+    use super::*;
+
+    #[test]
+    fn accepts_construct_folders_export_metadata_and_nested_paths() {
+        let json = r#"{
+            "schema_version": 1,
+            "package": {
+                "format": "construct3_web",
+                "export_mode": "folders",
+                "media_folder": "media/"
+            },
+            "assets": [
+                {"id":"hero.idle","path":"images/Hero/Idle.webp","kind":"image"},
+                {"id":"hit","path":"media/Sounds/Hit.ogg","kind":"audio"},
+                {"id":"theme","path":"media/Music/Theme.m4a","kind":"audio"}
+            ]
+        }"#;
+        let manifest = WebAssetManifest::parse(json).unwrap();
+        assert_eq!(manifest.assets[0].path, "images/Hero/Idle.webp");
+        assert_eq!(manifest.assets[1].path, "media/Sounds/Hit.ogg");
+        assert_eq!(manifest.assets[2].path, "media/Music/Theme.m4a");
+    }
+
+    #[test]
+    fn rejects_unknown_construct_export_modes() {
+        let json = r#"{
+            "schema_version": 1,
+            "package": {
+                "format": "construct3_web",
+                "export_mode": "mystery"
+            },
+            "assets": []
+        }"#;
+        assert!(WebAssetManifest::parse(json).is_err());
+    }
+
+    #[test]
+    fn rejects_unsafe_construct_media_folder() {
+        let json = r#"{
+            "schema_version": 1,
+            "package": {
+                "format": "construct3_web",
+                "media_folder": "../outside/"
+            },
+            "assets": []
+        }"#;
+        assert!(WebAssetManifest::parse(json).is_err());
+    }
 }
