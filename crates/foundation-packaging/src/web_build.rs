@@ -242,6 +242,16 @@ pub fn build_web_from_file(
     }
 
     let output_directory = resolve_from(&project_root, &config.output.directory);
+    if output_directory == project_root
+        || output_directory.starts_with(&assets_root)
+        || assets_root.starts_with(&output_directory)
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Web output directory must be separate from the project and asset source directories",
+        )
+        .into());
+    }
     let output_parent = output_directory.parent().ok_or_else(|| {
         io::Error::new(io::ErrorKind::InvalidInput, "output directory has no parent")
     })?;
@@ -359,6 +369,13 @@ pub fn build_web_from_file(
 
     let archive = config.output.archive.as_ref().map(|path| resolve_from(&project_root, path));
     if let Some(archive_path) = &archive {
+        if archive_path.starts_with(&output_directory) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Web ZIP archive must be outside the directory it archives",
+            )
+            .into());
+        }
         create_zip_archive(&output_directory, archive_path)?;
     }
 
@@ -571,7 +588,7 @@ fn escape_html(value: &str) -> String {
 }
 
 fn create_zip_archive(directory: &Path, archive_path: &Path) -> Result<(), Box<dyn Error>> {
-    if let Some(parent) = archive_path.parent() {
+    if let Some(parent) = archive_path.parent().filter(|parent| !parent.as_os_str().is_empty()) {
         fs::create_dir_all(parent)?;
     }
     if archive_path.exists() {
@@ -679,8 +696,6 @@ crate-name = "demo_game"
 features = ["web-foundation"]
 target = "wasm32-unknown-unknown"
 profile = "release"
-
-assets-root = "assets"
 
 [web]
 title = "Demo Game"
