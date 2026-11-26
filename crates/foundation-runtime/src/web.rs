@@ -10,7 +10,7 @@ use crate::{
     RuntimeConfig, RuntimeError, RuntimeHost, TextureId,
 };
 use js_sys::{ArrayBuffer, Function, Reflect, Uint8Array};
-use serde::Deserialize;
+use crate::web_export::{validate_web_export_path, WebAssetKind, WebExportManifest};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
@@ -24,133 +24,6 @@ use web_sys::{
 };
 
 const MAX_AUDIO_VOICES: usize = 48;
-
-fn default_asset_volume() -> i32 {
-    100
-}
-
-/// Manifest format for resources shipped beside an exported HTML5 game.
-#[derive(Debug, Clone, Deserialize)]
-pub struct WebAssetManifest {
-    pub schema_version: u32,
-    /// Optional package metadata. Construct 3 exports can declare their
-    /// directory mode and media folder without changing resource IDs/paths.
-    #[serde(default)]
-    pub package: Option<WebPackageMetadata>,
-    pub assets: Vec<WebAssetEntry>,
-}
-
-/// Optional metadata describing the published web package layout.
-///
-/// Asset paths remain explicit and relative to the manifest URL. In
-/// particular, `media_folder` is descriptive metadata, not a path prefix
-/// silently applied to every asset.
-#[derive(Debug, Clone, Deserialize)]
-pub struct WebPackageMetadata {
-    pub format: String,
-    #[serde(default)]
-    pub export_mode: Option<String>,
-    #[serde(default)]
-    pub media_folder: Option<String>,
-}
-
-/// One resource with a stable ID and a path relative to the manifest URL.
-#[derive(Debug, Clone, Deserialize)]
-pub struct WebAssetEntry {
-    pub id: String,
-    pub path: String,
-    /// Optional alternate encodings/URLs, tried in order when the primary fails.
-    #[serde(default)]
-    pub fallbacks: Vec<String>,
-    /// Audio gain percentage, clamped to the shared 0..=400 range.
-    /// Ignored for image/data entries; defaults to the native game's 100% baseline.
-    #[serde(default = "default_asset_volume")]
-    pub volume_percent: i32,
-    pub kind: WebAssetKind,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum WebAssetKind {
-    Image,
-    Audio,
-    Data,
-}
-
-/// Resource IDs produced by loading one web manifest.
-#[derive(Debug, Default)]
-pub struct LoadedWebAssets {
-    pub textures: HashMap<String, TextureId>,
-    pub audio_clips: HashMap<String, AudioClipId>,
-    /// Decoded RGBA images retained for game-specific atlas slicing and metadata.
-    pub images: HashMap<String, RgbaImage>,
-    /// Raw bytes for INI files and other game-specific data assets.
-    pub data: HashMap<String, Vec<u8>>,
-}
-
-impl WebAssetManifest {
-    /// Parse and validate the full manifest before issuing asset requests.
-    pub fn parse(json: &str) -> Result<Self, RuntimeError> {
-        let manifest: Self = serde_json::from_str(json)
-            .map_err(|error| RuntimeError::Host(format!("invalid web asset manifest: {error}")))?;
-        if manifest.schema_version != 1 {
-            return Err(RuntimeError::Unsupported("web asset manifest schema version"));
-        }
-
-        if let Some(package) = &manifest.package {
-            if package.format != "construct3_web" {
-                return Err(RuntimeError::InvalidConfig("unsupported web package format"));
-            }
-            if let Some(mode) = &package.export_mode {
-                if mode != "folders" && mode != "flat" {
-                    return Err(RuntimeError::InvalidConfig("invalid Construct export mode"));
-                }
-            }
-            if let Some(folder) = &package.media_folder {
-                let normalized = folder.trim_end_matches('/');
-                validate_relative_asset_path(normalized)?;
-            }
-        }
-
-        let mut ids = HashSet::<String>::new();
-        for asset in &manifest.assets {
-            if asset.id.is_empty()
-                || asset.id.len() > 128
-                || !asset.id.bytes().all(|byte| {
-                    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b'/')
-                })
-            {
-                return Err(RuntimeError::InvalidConfig("invalid web asset ID"));
-            }
-            if !ids.insert(asset.id.clone()) {
-                return Err(RuntimeError::Host(format!(
-                    "duplicate web asset ID: {}",
-                    asset.id
-                )));
-            }
-            validate_relative_asset_path(&asset.path)?;
-        }
-        Ok(manifest)
-    }
-}
-
-fn validate_relative_asset_path(path: &str) -> Result<(), RuntimeError> {
-    if path.is_empty()
-        || path.starts_with('/')
-        || path.starts_with("//")
-        || path.contains('\\')
-        || path.contains(':')
-        || path
-            .split('/')
-            .any(|part| part.is_empty() || part == "." || part == "..")
-        || path.chars().any(char::is_control)
-    {
-        return Err(RuntimeError::InvalidConfig(
-            "asset paths must be safe relative paths inside the web package",
-        ));
-    }
-    Ok(())
-}
 
 #[derive(Default)]
 struct BrowserInput {
@@ -479,7 +352,7 @@ impl Canvas2dHost {
         let bytes = fetch_bytes(&self.window, manifest_url).await?;
         let json = String::from_utf8(bytes)
             .map_err(|error| RuntimeError::Host(format!("manifest is not UTF-8: {error}")))?;
-        let manifest = WebAssetManifest::parse(&json)?;
+        let manifest = WebExportManifest::parse(&json)?;
         let page_url = self.window.location().href().map_err(js_error)?;
         let base = Url::new_with_base(manifest_url, &page_url).map_err(js_error)?;
 
@@ -491,7 +364,7 @@ impl Canvas2dHost {
             let mut last_error = None;
             let mut registered = false;
             for path in candidates {
-                validate_relative_asset_path(&path)?;
+                validate_web_export_path(&path)?;
                 let url = Url::new_with_base(&path, &base.href()).map_err(js_error)?;
                 let attempt = async {
                     let bytes = fetch_bytes(&self.window, &url.href()).await?;
@@ -950,57 +823,4 @@ fn rgba_css(rgba: [u8; 4]) -> String {
 
 fn js_error(error: JsValue) -> RuntimeError {
     RuntimeError::Host(error.as_string().unwrap_or_else(|| format!("{error:?}")))
-}
-
-
-#[cfg(test)]
-mod construct_web_export_metadata_tests {
-    use super::*;
-
-    #[test]
-    fn accepts_construct_folders_export_metadata_and_nested_paths() {
-        let json = r#"{
-            "schema_version": 1,
-            "package": {
-                "format": "construct3_web",
-                "export_mode": "folders",
-                "media_folder": "media/"
-            },
-            "assets": [
-                {"id":"hero.idle","path":"images/Hero/Idle.webp","kind":"image"},
-                {"id":"hit","path":"media/Sounds/Hit.ogg","kind":"audio"},
-                {"id":"theme","path":"media/Music/Theme.m4a","kind":"audio"}
-            ]
-        }"#;
-        let manifest = WebAssetManifest::parse(json).unwrap();
-        assert_eq!(manifest.assets[0].path, "images/Hero/Idle.webp");
-        assert_eq!(manifest.assets[1].path, "media/Sounds/Hit.ogg");
-        assert_eq!(manifest.assets[2].path, "media/Music/Theme.m4a");
-    }
-
-    #[test]
-    fn rejects_unknown_construct_export_modes() {
-        let json = r#"{
-            "schema_version": 1,
-            "package": {
-                "format": "construct3_web",
-                "export_mode": "mystery"
-            },
-            "assets": []
-        }"#;
-        assert!(WebAssetManifest::parse(json).is_err());
-    }
-
-    #[test]
-    fn rejects_unsafe_construct_media_folder() {
-        let json = r#"{
-            "schema_version": 1,
-            "package": {
-                "format": "construct3_web",
-                "media_folder": "../outside/"
-            },
-            "assets": []
-        }"#;
-        assert!(WebAssetManifest::parse(json).is_err());
-    }
 }
