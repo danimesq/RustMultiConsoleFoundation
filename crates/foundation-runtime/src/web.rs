@@ -43,6 +43,19 @@ struct ActiveVoice {
     ends_at: f64,
 }
 
+/// Resources fetched and decoded from a Foundation Web export manifest.
+#[derive(Default)]
+pub struct LoadedWebAssets {
+    /// Stable game-facing image IDs mapped to registered Foundation textures.
+    pub textures: HashMap<String, TextureId>,
+    /// Decoded image pixels retained for consumers that need the source dimensions/data.
+    pub images: HashMap<String, RgbaImage>,
+    /// Stable game-facing audio IDs mapped to registered Foundation audio clips.
+    pub audio_clips: HashMap<String, AudioClipId>,
+    /// Unmodified bytes for game-specific configuration and data files.
+    pub data: HashMap<String, Vec<u8>>,
+}
+
 /// Canvas 2D + WebAudio runtime host for wasm32-unknown-unknown.
 ///
 /// The browser application drives the host from requestAnimationFrame. Call
