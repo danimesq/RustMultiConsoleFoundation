@@ -355,7 +355,9 @@ impl Sdl3Host {
     }
 
     fn reset_input(&mut self) {
-        for key in self.held_keys.drain() {
+        // End the mutable drain borrow before resolving keys through the current map.
+        let held: Vec<_> = self.held_keys.drain().collect();
+        for key in held {
             if let Some((player, slot)) = self.key_binding(key) {
                 self.pending_released[player] |= 1_u32 << slot;
             }
