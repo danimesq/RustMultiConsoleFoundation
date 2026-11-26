@@ -409,6 +409,14 @@ impl Canvas2dHost {
         Ok(loaded)
     }
 
+    /// Load a Foundation Web export. All asset paths are relative to the manifest URL.
+    pub async fn load_web_export(
+        &mut self,
+        manifest_url: &str,
+    ) -> Result<LoadedWebAssets, RuntimeError> {
+        self.load_asset_manifest(manifest_url).await
+    }
+
     fn create_beep_buffer(
         &self,
         frequency_hz: u32,
