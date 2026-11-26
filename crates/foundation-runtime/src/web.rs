@@ -9,7 +9,7 @@ use crate::{
     FrameOutput, InputSnapshot, PadDirection, PlayerInputSnapshot, Rect, RgbaImage,
     RuntimeConfig, RuntimeError, RuntimeHost, TextureId,
 };
-use js_sys::{ArrayBuffer, Uint8Array};
+use js_sys::{ArrayBuffer, Function, Reflect, Uint8Array};
 use serde::Deserialize;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -353,8 +353,23 @@ impl Canvas2dHost {
             image.height,
         )
         .map_err(js_error)?;
-        texture_context
-            .put_image_data(&image_data, 0.0, 0.0)
+        // web-sys currently gates put_image_data behind its unstable API cfg.
+        // Invoke the standardized Canvas method dynamically instead of requiring
+        // a global web_sys_unstable_apis flag for every consumer build.
+        let put_image_data = Reflect::get(
+            texture_context.as_ref(),
+            &JsValue::from_str("putImageData"),
+        )
+        .map_err(js_error)?
+        .dyn_into::<Function>()
+        .map_err(js_error)?;
+        put_image_data
+            .call3(
+                texture_context.as_ref(),
+                image_data.as_ref(),
+                &JsValue::from_f64(0.0),
+                &JsValue::from_f64(0.0),
+            )
             .map_err(js_error)?;
 
         let id = TextureId(self.next_texture_id);
