@@ -119,6 +119,11 @@ impl WebExportManifest {
         }
         validate_web_export_path(&self.wasm.javascript_glue)?;
         validate_web_export_path(&self.wasm.wasm_module)?;
+        if self.wasm.javascript_glue == WEB_EXPORT_MANIFEST_FILE
+            || self.wasm.wasm_module == WEB_EXPORT_MANIFEST_FILE
+        {
+            return Err(RuntimeError::InvalidConfig("web-export.json is reserved for the manifest"));
+        }
         if self.wasm.javascript_glue == self.wasm.wasm_module {
             return Err(RuntimeError::InvalidConfig("WASM module and JavaScript glue paths must differ"));
         }
@@ -140,8 +145,14 @@ impl WebExportManifest {
                 )));
             }
             validate_web_export_path(&asset.path)?;
+            if asset.path == WEB_EXPORT_MANIFEST_FILE {
+                return Err(RuntimeError::InvalidConfig("web-export.json is reserved for the manifest"));
+            }
             for fallback in &asset.fallbacks {
                 validate_web_export_path(fallback)?;
+                if fallback == WEB_EXPORT_MANIFEST_FILE {
+                    return Err(RuntimeError::InvalidConfig("web-export.json is reserved for the manifest"));
+                }
             }
             if !(0..=400).contains(&asset.volume_percent) {
                 return Err(RuntimeError::InvalidConfig("asset volume must be between 0 and 400"));
@@ -327,6 +338,12 @@ pub fn validate_web_export_path(path: &str) -> Result<(), RuntimeError> {
         || path.starts_with("//")
         || path.contains('\\')
         || path.contains(':')
+        || path.contains('%')
+        || path.contains('?')
+        || path.contains('#')
+        || path.contains('%')
+        || path.contains('?')
+        || path.contains('#')
         || path
             .split('/')
             .any(|part| part.is_empty() || part == "." || part == "..")
