@@ -4,7 +4,7 @@ A reusable Rust game-development foundation for exploring native, web, legacy de
 
 ## 🌈 Runtime API and native SDL3 host
 
-The `foundation-runtime` crate contains a platform-neutral consumer API and an optional **working native SDL3 host**. The host opens an actual window, accepts normalized keyboard input, uploads RGBA textures, executes renderer-neutral draw commands, loads WAV clips and plays audio through a Foundation-owned PCM mixer.
+The `foundation-runtime` crate contains a platform-neutral consumer API, an optional **native SDL3 host**, and a browser **Canvas 2D + WebAudio host** for `wasm32-unknown-unknown`. The native host opens an actual window, accepts normalized keyboard input, uploads RGBA textures, executes renderer-neutral draw commands, loads WAV clips and plays audio through a Foundation-owned PCM mixer. The browser host consumes the same draw/audio requests using Canvas 2D and WebAudio; WebGL is intentionally deferred.
 
 Run the native proof application:
 
@@ -20,6 +20,8 @@ The demo opens a logical 400×300 pixel-art window, renders a texture and plays 
 - Platform-neutral tests: `cargo test -p foundation-runtime`
 - Full host tests: `cargo test --workspace --features foundation-runtime/native-sdl3`
 - WASM core compile check: `cargo check -p foundation-runtime --target wasm32-unknown-unknown`
+- WASM Canvas 2D + WebAudio host: `cargo check -p foundation-runtime --target wasm32-unknown-unknown --features web-canvas`
+- Browser host contract and manifest: [Canvas 2D + WebAudio guide](docs/web-canvas2d-webaudio.md)
 
 Consumers depend on Foundation types and the optional `native-sdl3` feature. They do not import SDL types, create a second window, or implement a competing device callback. The game continues to own gameplay rules and source-specific asset interpretation.
 
