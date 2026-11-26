@@ -56,13 +56,18 @@ A manifest uses schema version 1:
   "assets": [
     { "id": "stage_01", "path": "assets/stage-01.bmp", "kind": "image" },
     { "id": "fighter_chaves", "path": "assets/chaves.png", "kind": "image" },
-    { "id": "fight_hit_01", "path": "audio/hit-01.wav", "kind": "audio" },
+    {
+      "id": "fight_hit_01",
+      "path": "audio/hit-01.ogg",
+      "fallbacks": ["audio/hit-01.m4a", "audio/hit-01.wav"],
+      "kind": "audio"
+    },
     { "id": "fighter_config_chaves", "path": "data/C01.ini", "kind": "data" }
   ]
 }
 ```
 
-Paths are resolved relative to the manifest URL, must be safe relative paths, and cannot escape the package directory with `..`. Resource IDs must be unique. Images are decoded from PNG/BMP into Foundation RGBA textures; WAV files are decoded into WebAudio buffers; data entries are returned unchanged as byte arrays so the consuming game can parse INI or other configuration formats.
+Paths and optional `fallbacks` are resolved relative to the manifest URL, must be safe relative paths, and cannot escape the package directory with `..`. Resource IDs must be unique. Images are decoded from PNG/BMP into Foundation RGBA textures; audio files are decoded by the browser's `decodeAudioData()` implementation (for example WAV, OGG, MP3, or AAC/M4A where supported by that browser); data entries are returned unchanged as byte arrays so the consuming game can parse INI or other configuration formats. Alternate audio encodings can be listed in `fallbacks`, matching the multi-format packaging pattern used by HTML5 game exporters. The loader tries each source until one fetches and decodes successfully.
 
 Load the manifest asynchronously:
 
@@ -79,7 +84,7 @@ This loader is generic. StreetChavesRust remains responsible for interpreting it
 
 ## WebAudio
 
-The browser host decodes WAV input to stereo floating-point AudioBuffers and applies the requested volume percentage during registration. Playback uses `AudioBufferSourceNode` instances connected to the host AudioContext.
+The browser host decodes complete audio files with the browser's native WebAudio decoder into floating-point AudioBuffers, then applies the requested volume percentage with a per-voice GainNode. Playback uses `AudioBufferSourceNode` instances connected to the host AudioContext. The actual encoded format depends on the browser's supported codecs; exporters should provide fallback encodings for browsers with different codec support.
 
 The adapter preserves the current clip-level behavior:
 
