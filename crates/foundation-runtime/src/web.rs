@@ -610,6 +610,12 @@ impl Canvas2dHost {
     }
 }
 
+impl crate::TextureRegistrar for Canvas2dHost {
+    fn register_texture(&mut self, image: &RgbaImage) -> Result<TextureId, RuntimeError> {
+        Canvas2dHost::register_texture(self, image)
+    }
+}
+
 impl RuntimeHost for Canvas2dHost {
     fn capabilities(&self) -> Capabilities {
         Capabilities {
