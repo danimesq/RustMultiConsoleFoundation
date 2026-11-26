@@ -316,6 +316,44 @@ impl Canvas2dHost {
         Ok(())
     }
 
+    /// Upload RGBA pixels into an offscreen browser canvas and return a stable texture ID.
+    pub fn register_texture(&mut self, image: &RgbaImage) -> Result<TextureId, RuntimeError> {
+        if image.width == 0 || image.height == 0 {
+            return Err(RuntimeError::InvalidConfig("texture dimensions must be non-zero"));
+        }
+        let document = self
+            .window
+            .document()
+            .ok_or_else(|| RuntimeError::Host("browser document is unavailable".to_owned()))?;
+        let texture_canvas = document
+            .create_element("canvas")
+            .map_err(js_error)?
+            .dyn_into::<HtmlCanvasElement>()
+            .map_err(js_error)?;
+        texture_canvas.set_width(image.width);
+        texture_canvas.set_height(image.height);
+        let texture_context = texture_canvas
+            .get_context("2d")
+            .map_err(js_error)?
+            .ok_or(RuntimeError::Unsupported("offscreen Canvas 2D context"))?
+            .dyn_into::<CanvasRenderingContext2d>()
+            .map_err(js_error)?;
+        let image_data = ImageData::new_with_u8_clamped_array_and_sh(
+            Clamped(image.pixels.as_slice()),
+            image.width,
+            image.height,
+        )
+        .map_err(js_error)?;
+        texture_context
+            .put_image_data(&image_data, 0.0, 0.0)
+            .map_err(js_error)?;
+
+        let id = TextureId(self.next_texture_id);
+        self.next_texture_id = self.next_texture_id.saturating_add(1);
+        self.textures.insert(id, texture_canvas);
+        Ok(id)
+    }
+
     /// Decode PNG/BMP bytes and register a browser-owned texture.
     pub fn register_image_bytes(&mut self, bytes: &[u8]) -> Result<TextureId, RuntimeError> {
         let decoded = image::load_from_memory(bytes)
