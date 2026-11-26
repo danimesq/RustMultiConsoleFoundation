@@ -131,6 +131,105 @@ The builder checks the schema version, application identity, unique asset IDs, s
 
 This creates a deployable directory package. The consuming project still owns its WASM compilation and decides which assets to include. This slice does not yet provide ZIP/archive output, an HTML template generator, media transcoding, automatic content-addressed optimization or a publisher CLI.
 
+## Foundation-owned source-to-WebAssembly build
+
+RustMultiConsoleFoundation owns the Web build pipeline. Game and engine repositories provide their Rust source crate, build features, an optional browser bootstrap module, and a source-asset catalog. They do **not** compile WASM or assemble the final package themselves.
+
+The Foundation packaging crate exposes:
+
+- `foundation_packaging::web_build::WebBuildConfig`
+- `foundation_packaging::web_build::build_web_from_file()`
+- `foundation-web-build`, the CLI entry point
+
+The builder invokes Cargo to compile the selected consumer package for `wasm32-unknown-unknown`, invokes `wasm-bindgen` to produce the JavaScript glue and WebAssembly module, generates an HTML shell, stages the compiled bundle and source assets through the shared `WebExportBuilder`, writes `web-export.json`, and creates a ZIP archive when configured.
+
+Install the target and the matching wasm-bindgen CLI once on the build machine:
+
+```sh
+rustup target add wasm32-unknown-unknown
+cargo install wasm-bindgen-cli
+```
+
+Example `FoundationWebBuild.toml`:
+
+```toml
+schema-version = 1
+assets-root = "../OpenStreetChaves"
+
+[application]
+id = "street-chaves"
+name = "Street Chaves"
+
+[build]
+project-dir = "."
+manifest-path = "Cargo.toml"
+package = "street-chaves-rust"
+crate-name = "street_chaves"
+features = ["web-foundation"]
+target = "wasm32-unknown-unknown"
+profile = "release"
+
+[web]
+title = "Street Chaves"
+canvas-id = "street-chaves"
+bootstrap = "web/main.js"
+
+[output]
+directory = "dist/street-chaves-web"
+archive = "dist/street-chaves-web.zip"
+
+[[assets]]
+id = "stage_01"
+source = "Cenarios/Cenario-01.bmp"
+path = "assets/images/stages/Cenario-01.bmp"
+kind = "image"
+source-url = "https://github.com/danimesq/OpenStreetChaves/blob/main/Cenarios/Cenario-01.bmp"
+
+[[assets]]
+id = "fighter_01"
+source = "Lutadores/C01.bmp"
+path = "assets/images/fighters/C01.bmp"
+kind = "image"
+source-url = "https://github.com/danimesq/OpenStreetChaves/blob/main/Lutadores/C01.bmp"
+
+[[assets]]
+id = "fighter_ini_01"
+source = "Dados/Lutadores/C01.ini"
+path = "assets/data/C01.ini"
+kind = "data"
+source-url = "https://github.com/danimesq/OpenStreetChaves/blob/main/Dados/Lutadores/C01.ini"
+```
+
+Build from the consumer repository:
+
+```sh
+cargo run -p foundation-packaging --bin foundation-web-build -- \
+  --config FoundationWebBuild.toml
+```
+
+The result is a deployable directory and ZIP archive. Foundation generates the HTML shell using the configured canvas ID and loads the consumer bootstrap as `main.js`. The bootstrap can create the game instance, load `web-export.json`, start the frame loop and handle browser audio activation. When no bootstrap is configured, Foundation emits a minimal module that initializes the wasm-bindgen output.
+
+The build configuration separates **source location** from **published location**. Source files are resolved under `assets-root`; published paths are package-relative and validated by Foundation. Optional `source-url` entries are retained in `web-build-provenance.json`, so packaged assets can keep direct links to their upstream files.
+
+All build-time asset inputs must exist before compilation. Missing assets, unsafe paths, duplicate IDs, missing Cargo artifacts, missing wasm-bindgen output and tool failures stop the build with a diagnostic. The build never overwrites canonical source assets with target conversions.
+
+### Build pipeline ownership
+
+Foundation owns each stage:
+
+1. Rust compilation for the selected target and profile.
+2. Bindgen/glue generation for browser loading.
+3. HTML shell generation and consumer bootstrap integration.
+4. Source asset ingestion, path validation and package staging.
+5. Target-specific image/audio conversion and optimization as build profiles add those processors.
+6. Versioned package manifest and provenance output.
+7. Directory and archive generation.
+8. Artifact checksums, reproducibility metadata and final validation.
+
+The current source-driven implementation completes stages 1–4 and 6–7 for the browser target. It copies source assets unchanged for now; codec transcoding, image optimization, generated alternate formats and streamed-music delivery are subsequent Foundation-owned build/runtime capabilities, not responsibilities delegated to StreetChavesRust or ImpossibleEngine.
+
+ImpossibleEngine will call the same library API from its publishing backend once that backend is wired. StreetChavesRust remains an independent game project and uses Foundation directly; it does not depend on ImpossibleEngine.
+
 ## Browser host
 
 The optional `web-canvas` feature provides a browser host for `wasm32-unknown-unknown`:
