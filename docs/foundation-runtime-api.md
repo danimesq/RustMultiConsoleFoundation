@@ -1,41 +1,62 @@
-# foundation-runtime: initial public API
+# Foundation runtime: executable consumer contract
 
-This is the first concrete consumer-facing runtime crate in RustMultiConsoleFoundation. It is backend-neutral and has no external dependencies in this first slice.
+The `foundation-runtime` crate now provides two things that are exercised by code, not just described in architecture documents:
 
-## Included API
+1. A platform-neutral contract for normalized player input, render commands, resource IDs, capabilities and semantic audio.
+2. An optional native SDL3 host behind the `native-sdl3` feature.
 
-- `RuntimeConfig`: requested logical display configuration.
-- `Capabilities` and `CapabilityStatus`: explicit supported, unavailable, emulated, degraded, and unknown reporting.
-- `InputSnapshot`: normalized directional, confirm/cancel, pointer, and quit state.
-- `DrawCommand` and `FrameOutput`: minimal renderer-neutral frame output.
-- `AudioRequest`: semantic audio request values.
-- `RuntimeHost`: trait implemented by platform adapters.
-- `Runtime`: frame coordinator that polls input, invokes consumer update, dispatches audio, and presents output.
-- `RuntimeError`: typed error cases.
+## Native host
 
-## Consumer example
-
-See `examples/mock_host.rs`. It demonstrates one frame through a mock host without requiring a native window.
-
-## Architecture boundaries
-
-- Does not initialize SDL, Bevy, Orbital, browser APIs, or console SDKs.
-- Does not yet implement a production renderer, audio device, storage, or host event loop.
-- Adapter owns host integration. Avoid duplicate event loop/window/input ownership.
-- Consumer owns game state and simulation timing. Frame delta is not a replacement for fixed-step deterministic simulation.
-- Capability support is explicit; unsupported operations must not silently succeed.
-- Bevy remains optional. A later Bevy adapter can bridge this API only after host-loop ownership is validated.
-
-## Current status
-
-Initial `0.1.0` API scaffold, not yet backed by a validated native, web, or console adapter. Before consumer integration, implement and validate one host adapter, a target matrix, feature/MSRV policy, and adapter-level tests. This API may evolve before `1.0`.
-
-## Validate
+Build and run the actual desktop window / texture / audio example:
 
 ```sh
-cargo test -p foundation-runtime
-cargo run -p foundation-runtime --example mock_host
-cargo doc -p foundation-runtime --no-deps
+cargo run -p foundation-runtime --example native_sdl3_host --features native-sdl3
 ```
 
-Cargo features and optional backend dependencies should remain additive and documented. See the Cargo feature guide: https://doc.rust-lang.org/cargo/reference/features.html
+The example opens an SDL3 window, uploads an RGBA texture, presents renderer-neutral draw commands, polls physical keyboard input and plays a tone through the host audio mixer when player one presses Z. Escape closes the window.
+
+A consumer does not import SDL types or own an SDL window. It imports `Sdl3Host` and Foundation types only:
+
+```rust
+use foundation_runtime::native_sdl::Sdl3Host;
+use foundation_runtime::{RuntimeConfig, RuntimeHost, FrameOutput};
+```
+
+## Practical API
+
+- `Sdl3Host::new(RuntimeConfig)`: initialize SDL video/input and create the native window. Audio is optional and reported as unavailable if no output device opens.
+- `Sdl3Host::load_bmp` / `load_png`: decode local images to Foundation-owned RGBA8 buffers.
+- `Sdl3Host::register_texture`: upload an `RgbaImage` and return a backend-neutral `TextureId`.
+- `Sdl3Host::load_wav`: decode and convert a WAV to 44.1 kHz signed 16-bit stereo, returning a Foundation-owned `AudioClipId`.
+- `RuntimeHost::poll_input`: produce normalized two-player directional and button state, including pressed/released edges and five custom-special slots per player.
+- `RuntimeHost::present`: draw ordered `Clear`, `Rect`, and `Texture` commands in the configured logical resolution with letterboxing.
+- `RuntimeHost::audio`: play/loop a clip, stop a clip, stop all clips, or play a diagnostic tone.
+
+The PCM mixer lives in `audio.rs`, outside the SDL adapter. It uses 44.1 kHz S16 stereo, 48 concurrent voices, one active voice per clip, oldest-voice stealing, loop support and saturating summation. This gives consumers a shared mix policy while allowing each target to provide its own device callback.
+
+## Native keyboard defaults
+
+| Player | Direction | Four attack slots | Five special slots |
+|---|---|---|---|
+| 1 | Arrows | Z, X, C, V | F1..F5 |
+| 2 | W, A, S, D | R, T, Y, U | Keypad 1..5 |
+
+Player input is independent of the UI-oriented `confirm/cancel` fields. A consumer maps `PlayerInputSnapshot` into its own game-specific `InputFrame`; Foundation never makes fighting-game move decisions.
+
+## Asset ownership boundary
+
+The Foundation decodes generic BMP/PNG/WAV files, stores RGBA data, uploads textures, and plays decoded clips. It does not parse Street Chaves INI/ROT, determine sprite-sheet cuts, know the Pascal white color key, choose fighter animation frames, or interpret `SomPendente` indices. Those are game asset/gameplay policies and remain in StreetChavesRust.
+
+A future game migration should therefore replace its SDL device/window/renderer/audio code with this host, while keeping source-faithful asset extraction and event-to-clip mapping in the game. The Foundation receives only generic draw and audio requests.
+
+## Target boundary and checks
+
+- SDL3 0.22.1 is an optional dependency and is target-gated away from wasm32.
+- Native consumers opt in with `features = ["native-sdl3"]`.
+- The same `foundation-runtime` platform-neutral API can be built for `wasm32-unknown-unknown` without SDL. A browser host is not implemented by this PR.
+- CI runs formatter, the workspace tests with native SDL3 enabled, and a wasm32 compile check for the platform-neutral runtime.
+- The SDL3 `build-from-source-unix-console` option allows headless Linux CI runners without X11/Wayland development libraries. Desktop builds can still use available native window backends.
+
+## Current backend limits
+
+The first SDL3 host implements window creation, logical scaling/letterboxing, keyboard input, texture registration, BMP/PNG decode, WAV playback and audio clip control. Mouse and gamepad capabilities are currently reported as unavailable. Text rendering, controller hotplug, persistent storage and device hotplug/recovery remain future capabilities; unsupported features are not silently reported as working.

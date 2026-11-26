@@ -2,15 +2,26 @@
 
 A reusable Rust game-development foundation for exploring native, web, legacy desktop, and classic-console targets. The project focuses on shared game logic with target-specific runtimes, renderers, assets, and build pipelines.
 
-## 🌈 Runtime API (early scaffold)
+## 🌈 Runtime API and native SDL3 host
 
-The new `foundation-runtime` crate introduces a backend-neutral public API for normalized input, capabilities, renderer-neutral frame output, semantic audio requests, and a small frame coordinator. It has no SDL, Bevy, Orbital, browser, or console SDK dependency yet.
+The `foundation-runtime` crate contains a platform-neutral consumer API and an optional **working native SDL3 host**. The host opens an actual window, accepts normalized keyboard input, uploads RGBA textures, executes renderer-neutral draw commands, loads WAV clips and plays audio through a Foundation-owned PCM mixer.
 
-- [Initial runtime API documentation](docs/foundation-runtime-api.md)
-- Mock-host example: `cargo run -p foundation-runtime --example mock_host`
-- Tests: `cargo test -p foundation-runtime`
+Run the native proof application:
 
-This is an API scaffold only; it does not yet provide a production backend or guarantee support for any target.
+```sh
+cargo run -p foundation-runtime --example native_sdl3_host --features native-sdl3
+```
+
+The demo opens a logical 400×300 pixel-art window, renders a texture and plays a tone when player one presses Z. Escape closes the window.
+
+- Runtime API and service boundaries: [foundation-runtime API](docs/foundation-runtime-api.md)
+- Native SDL3 host details: [native SDL3 host](docs/native-sdl3-host.md)
+- Example source: `crates/foundation-runtime/examples/native_sdl3_host.rs`
+- Platform-neutral tests: `cargo test -p foundation-runtime`
+- Full host tests: `cargo test --workspace --features foundation-runtime/native-sdl3`
+- WASM core compile check: `cargo check -p foundation-runtime --target wasm32-unknown-unknown`
+
+Consumers depend on Foundation types and the optional `native-sdl3` feature. They do not import SDL types, create a second window, or implement a competing device callback. The game continues to own gameplay rules and source-specific asset interpretation.
 
 ## 🌈 Packaging
 
@@ -35,7 +46,8 @@ The adapter pins Cargo Packager to version `0.11.8` and disables its CLI feature
 ## 🌈 Documentation
 
 - [Rust Gaming Eclipse: shared architecture and integration contract](docs/rust-gaming-eclipse.md)
-- [Initial runtime API](docs/foundation-runtime-api.md)
+- [Foundation runtime API](docs/foundation-runtime-api.md)
+- [Native SDL3 host](docs/native-sdl3-host.md)
 - [Multi-console foundation: architecture and scope](docs/multi-console-foundation.md)
 - [Multi-backend platform abstraction and target-specific SDL selection](docs/multi-backend-platform-abstraction.md)
 - [Reproducible builds: architecture and implementation plan](docs/reproducible-builds-plan.md)
@@ -49,6 +61,4 @@ The adapter pins Cargo Packager to version `0.11.8` and disables its CLI feature
 
 ## 🌈 Research status
 
-The documents describe research findings, architectural proposals, and validation plans. They do not imply that every listed console, operating system, renderer, or SDK is already implemented or tested by this repository.
-
-The first intended game consumers are StreetChavesRust and PointBlankRust. The Foundation is designed to remain reusable by other games and tools as well.
+The Foundation now has one executable native desktop backend. Other operating systems, console platforms, browser hosts, gamepad input and legacy targets remain separate validation tracks. An implemented SDL3 desktop host does not imply that those other targets are ready.

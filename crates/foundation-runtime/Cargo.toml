@@ -1,13 +1,18 @@
 [package]
 name = "foundation-runtime"
 version = "0.1.0"
-description = "Platform-neutral runtime contracts for RustMultiConsoleFoundation game consumers"
+description = "Platform-neutral runtime contracts and optional native SDL3 host for RustMultiConsoleFoundation consumers"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+rust-version = "1.85"
 
 [lib]
 path = "src/lib.rs"
 
 [features]
 default = []
+native-sdl3 = ["dep:sdl3"]
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+sdl3 = { version = "0.22.1", optional = true, default-features = false, features = ["build-from-source", "build-from-source-unix-console", "unsafe_textures"] }

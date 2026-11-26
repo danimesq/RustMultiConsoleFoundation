@@ -1,0 +1,34 @@
+name: Foundation runtime
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Cargo.toml"
+      - "crates/foundation-runtime/**"
+      - ".github/workflows/rust-runtime.yml"
+  pull_request:
+    paths:
+      - "Cargo.toml"
+      - "crates/foundation-runtime/**"
+      - ".github/workflows/rust-runtime.yml"
+
+jobs:
+  native-sdl3:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SDL build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes build-essential cmake ninja-build pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          components: rustfmt
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Test workspace with native SDL3 host
+        run: cargo test --workspace --features foundation-runtime/native-sdl3
+      - name: Check platform-neutral runtime for WebAssembly
+        run: cargo check -p foundation-runtime --target wasm32-unknown-unknown
