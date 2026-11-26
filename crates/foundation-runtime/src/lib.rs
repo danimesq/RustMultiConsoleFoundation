@@ -249,6 +249,13 @@ pub trait RuntimeHost {
     fn audio(&mut self, request: &AudioRequest) -> Result<(), RuntimeError>;
 }
 
+/// Resource registration contract shared by native and browser renderer hosts.
+///
+/// The returned ID is backend-neutral; the concrete host keeps its platform handle private.
+pub trait TextureRegistrar {
+    fn register_texture(&mut self, image: &RgbaImage) -> Result<TextureId, RuntimeError>;
+}
+
 /// Frame coordinator that consumers drive from their chosen host loop.
 pub struct Runtime<H: RuntimeHost> {
     host: H,
