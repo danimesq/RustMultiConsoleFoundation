@@ -12,6 +12,12 @@ pub mod audio;
 #[cfg(all(feature = "native-sdl3", not(target_arch = "wasm32")))]
 pub mod native_sdl;
 
+/// Browser Canvas 2D, keyboard, asset-manifest and WebAudio host.
+///
+/// This adapter targets `wasm32-unknown-unknown`; it does not compile SDL or WebGL.
+#[cfg(all(feature = "web-canvas", target_arch = "wasm32"))]
+pub mod web;
+
 /// Requested logical game display configuration.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeConfig {
