@@ -60,6 +60,7 @@ A manifest uses schema version 1:
       "id": "fight_hit_01",
       "path": "audio/hit-01.ogg",
       "fallbacks": ["audio/hit-01.m4a", "audio/hit-01.wav"],
+      "volume_percent": 85,
       "kind": "audio"
     },
     { "id": "fighter_config_chaves", "path": "data/C01.ini", "kind": "data" }
