@@ -13,7 +13,6 @@ use js_sys::{ArrayBuffer, Function, Reflect, Uint8Array};
 use serde::Deserialize;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::io::Cursor;
 use std::rc::Rc;
 use std::time::Duration;
 use wasm_bindgen::closure::Closure;
@@ -180,7 +179,7 @@ impl Canvas2dHost {
             .map_err(js_error)?
             .ok_or(RuntimeError::Unsupported("Canvas 2D context"))?
             .dyn_into::<CanvasRenderingContext2d>()
-            .map_err(js_error)?;
+            .map_err(|error| js_error(error.into()))?;
         context.set_image_smoothing_enabled(!config.pixel_art);
 
         // Audio is optional; an unavailable device must not prevent the game from starting.
@@ -338,7 +337,7 @@ impl Canvas2dHost {
             .create_element("canvas")
             .map_err(js_error)?
             .dyn_into::<HtmlCanvasElement>()
-            .map_err(js_error)?;
+            .map_err(|error| js_error(error.into()))?;
         texture_canvas.set_width(image.width);
         texture_canvas.set_height(image.height);
         let texture_context = texture_canvas
