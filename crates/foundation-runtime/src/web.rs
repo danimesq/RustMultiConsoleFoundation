@@ -353,7 +353,7 @@ impl Canvas2dHost {
             .map_err(js_error)?
             .ok_or(RuntimeError::Unsupported("offscreen Canvas 2D context"))?
             .dyn_into::<CanvasRenderingContext2d>()
-            .map_err(js_error)?;
+            .map_err(|error| js_error(error.into()))?;
         let image_data = ImageData::new_with_u8_clamped_array_and_sh(
             Clamped(image.pixels.as_slice()),
             image.width,
