@@ -8,6 +8,9 @@ use std::time::Duration;
 /// Shared, backend-neutral PCM mixer. It has no windowing or device dependency.
 pub mod audio;
 
+/// Portable manifest builder and validation for WebAssembly exports.
+pub mod web_export;
+
 /// Native SDL3 window, keyboard, texture, WAV and audio-device host.
 #[cfg(all(feature = "native-sdl3", not(target_arch = "wasm32")))]
 pub mod native_sdl;
