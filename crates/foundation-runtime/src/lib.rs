@@ -247,6 +247,11 @@ pub trait RuntimeHost {
     fn present(&mut self, output: &FrameOutput) -> Result<(), RuntimeError>;
     /// Dispatch a semantic audio request.
     fn audio(&mut self, request: &AudioRequest) -> Result<(), RuntimeError>;
+
+    /// Release any held physical inputs after a host pause/visibility transition.
+    ///
+    /// Default no-op keeps existing consumer host implementations source-compatible.
+    fn reset_input_after_pause(&mut self) {}
 }
 
 /// Resource registration contract shared by native and browser renderer hosts.
