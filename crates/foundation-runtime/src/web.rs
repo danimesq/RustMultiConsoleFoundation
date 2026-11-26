@@ -72,7 +72,7 @@ impl WebAssetManifest {
             return Err(RuntimeError::Unsupported("web asset manifest schema version"));
         }
 
-        let mut ids = HashSet::new();
+        let mut ids = HashSet::<String>::new();
         for asset in &manifest.assets {
             if asset.id.is_empty()
                 || asset.id.len() > 128
@@ -82,7 +82,7 @@ impl WebAssetManifest {
             {
                 return Err(RuntimeError::InvalidConfig("invalid web asset ID"));
             }
-            if !ids.insert(asset.id.as_str()) {
+            if !ids.insert(asset.id.clone()) {
                 return Err(RuntimeError::Host(format!(
                     "duplicate web asset ID: {}",
                     asset.id
