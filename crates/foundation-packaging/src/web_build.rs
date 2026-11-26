@@ -480,6 +480,22 @@ fn canonical_asset_source(root: &Path, source: &Path) -> Result<PathBuf, Box<dyn
     Ok(canonical)
 }
 
+fn default_cargo_manifest() -> PathBuf {
+    PathBuf::from("Cargo.toml")
+}
+
+fn default_wasm_target() -> String {
+    "wasm32-unknown-unknown".to_owned()
+}
+
+fn default_profile() -> String {
+    "release".to_owned()
+}
+
+fn default_canvas_id() -> String {
+    "game-canvas".to_owned()
+}
+
 fn resolve_from(root: &Path, path: &Path) -> PathBuf {
     if path.is_absolute() {
         path.to_path_buf()
