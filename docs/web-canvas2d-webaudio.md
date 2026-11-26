@@ -117,12 +117,15 @@ let export = WebExportBuilder::new("street-chaves", "Street Chaves")
         ]),
         "verified-assets/theme.ogg",
     )
+    // Fallback paths are manifest entries too, so register their source files.
+    .package_file("verified-assets/theme.m4a", "assets/audio/music/theme.m4a")
+    .package_file("verified-assets/theme.mp3", "assets/audio/music/theme.mp3")
     .package_file("web-source/index.html", "index.html")
     .package_file("web-source/main.js", "main.js")
     .write_to("dist/web")?;
 ```
 
-`wasm_bundle_files` registers the JavaScript/WASM source files and their published paths. `asset_file` does the same for catalogued resources, including alternate encodings declared as fallbacks. `package_file` adds files such as the HTML shell or consumer-owned JavaScript entry point. Finally, `write_to` validates the complete package, copies registered files into their declared destinations and writes the root `web-export.json`.
+`wasm_bundle_files` registers the JavaScript/WASM source files and their published paths. `asset_file` registers the primary source file for a catalogued resource. For each alternate encoding declared in `fallbacks`, register its source separately with `package_file` using the exact fallback destination path. `package_file` also adds files such as the HTML shell or consumer-owned JavaScript entry point. Finally, `write_to` validates the complete package, copies registered files into their declared destinations and writes the root `web-export.json`.
 
 The builder checks the schema version, application identity, unique asset IDs, safe relative paths, fallback paths, duplicate destinations, missing source registrations and the audio volume range. Paths that are absolute or attempt to escape the package directory are rejected.
 
