@@ -1,16 +1,16 @@
 //! Concrete native SDL3 host for Foundation game consumers.
 //!
-//! SDL owns the window, event queue, textures, WAV decoding and audio device here.
+//! SDL owns the window, event queue, textures and audio device; WAV decoding is shared Rust code.
 //! Consumers exchange only Foundation-owned IDs, input snapshots and draw/audio commands.
 
-use crate::audio::{AudioMixer, SampleId, MIXER_CHANNELS, MIXER_RATE_HZ};
+use crate::audio::{decode_wav_pcm, generate_beep_pcm, AudioMixer, SampleId, MIXER_CHANNELS, MIXER_RATE_HZ};
 use crate::{
     AudioClipId, AudioRequest, Capabilities, CapabilityStatus, DrawCommand, FrameOutput,
     InputSnapshot, PadDirection, PhysicalKey, PlayerInputSnapshot, PlayerOneKeyMap, RgbaImage,
     RuntimeConfig, RuntimeError, RuntimeHost, TextureId,
 };
 use sdl3::audio::{
-    AudioCallback, AudioFormat, AudioSpec, AudioSpecWAV, AudioStream, AudioStreamWithCallback,
+    AudioCallback, AudioFormat, AudioSpec, AudioStream, AudioStreamWithCallback,
 };
 use sdl3::event::{Event, WindowEvent};
 use sdl3::keyboard::Scancode;
@@ -205,47 +205,18 @@ impl Sdl3Host {
 
     /// Decode a WAV to the Foundation's canonical 44.1 kHz S16 stereo mixer format.
     /// Volume follows the original Chaves convention: integer percent, clamped to 0..400.
+    /// Decode WAV using Foundation's shared integer resampler and volume path.
+    /// Native and browser hosts therefore receive the exact same canonical S16 samples.
     pub fn load_wav(
         &mut self,
         path: impl AsRef<Path>,
         volume_percent: i32,
     ) -> Result<AudioClipId, RuntimeError> {
-        let audio = self
-            .audio
-            .as_ref()
-            .ok_or(RuntimeError::Unsupported("audio output is unavailable"))?;
-        let wav = AudioSpecWAV::load_wav(path).map_err(host_error)?;
-        let source_spec = AudioSpec::new(
-            Some(wav.freq),
-            Some(i32::from(wav.channels)),
-            Some(wav.format),
-        );
-        let destination_spec = AudioSpec::new(
-            Some(MIXER_RATE_HZ as i32),
-            Some(MIXER_CHANNELS as i32),
-            Some(AudioFormat::s16_sys()),
-        );
-        let mut converter = audio
-            .new_stream(Some(&source_spec), Some(&destination_spec))
-            .map_err(host_error)?;
-        converter.put_data(wav.buffer()).map_err(host_error)?;
-        converter.flush().map_err(host_error)?;
-
-        let available = converter.available_bytes().map_err(host_error)?.max(0) as usize;
-        let mut pcm = vec![0_i16; available / std::mem::size_of::<i16>()];
-        let samples_read = converter
-            .read_i16_samples(&mut pcm)
-            .map_err(|error| RuntimeError::Host(error.to_string()))?;
-        pcm.truncate(samples_read - (samples_read % MIXER_CHANNELS));
-
-        let volume = volume_percent.clamp(0, 400);
-        if volume != 100 {
-            for sample in &mut pcm {
-                let scaled = (i32::from(*sample) * volume) / 100;
-                *sample = scaled.clamp(i16::MIN as i32, i16::MAX as i32) as i16;
-            }
+        if self.audio_stream.is_none() {
+            return Err(RuntimeError::Unsupported("audio output is unavailable"));
         }
-
+        let bytes = std::fs::read(path.as_ref()).map_err(host_error)?;
+        let pcm = decode_wav_pcm(&bytes, volume_percent).map_err(RuntimeError::Host)?;
         let id = AudioClipId(self.next_clip_id);
         self.next_clip_id = self.next_clip_id.saturating_add(1);
         self.clips.insert(id, Arc::from(pcm));
@@ -394,16 +365,7 @@ impl Sdl3Host {
     }
 
     fn play_beep(&mut self, frequency_hz: u32, duration_ms: u32) -> Result<(), RuntimeError> {
-        let frequency = frequency_hz.clamp(40, 12_000) as f64;
-        let frames = ((MIXER_RATE_HZ as u64 * duration_ms.min(5_000) as u64) / 1_000)
-            .max(1) as usize;
-        let mut pcm = Vec::with_capacity(frames * MIXER_CHANNELS);
-        for frame in 0..frames {
-            let phase = std::f64::consts::TAU * frequency * frame as f64 / MIXER_RATE_HZ as f64;
-            // Keep the diagnostic beep quiet enough to avoid clipping on mixed playback.
-            let sample = (phase.sin() * 7_000.0) as i16;
-            pcm.extend_from_slice(&[sample, sample]);
-        }
+        let pcm = generate_beep_pcm(frequency_hz, duration_ms);
         let id = AudioClipId(self.next_clip_id);
         self.next_clip_id = self.next_clip_id.saturating_add(1);
         self.clips.insert(id, Arc::from(pcm));
