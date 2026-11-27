@@ -105,4 +105,20 @@ function render(mixer, frames) {
   assert.deepEqual(right, [0, 0]);
 }
 
+{
+  // 48 kHz device output is resampled only after the canonical integer mix.
+  globalThis.sampleRate = 48_000;
+  const mixer = makeMixer();
+  send(mixer, {
+    type: "register",
+    clip: 77,
+    pcm: new Int16Array([0, 0, 10_000, -10_000, 20_000, -20_000, 30_000, -30_000]),
+  });
+  send(mixer, { type: "play", clip: 77, looped: false });
+  const [left, right] = render(mixer, 4);
+  assert.deepEqual(left, [0, 9188, 18375, 27563]);
+  assert.deepEqual(right, [0, -9187, -18375, -27562]);
+}
+
+globalThis.sampleRate = 44_100;
 console.log("AudioWorklet PCM mixer tests passed.");
