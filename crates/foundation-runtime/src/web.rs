@@ -4,7 +4,7 @@
 //! WebAudio output. Game code exchanges only Foundation IDs and draw/audio requests.
 //! This adapter intentionally does not include WebGL or SDL.
 
-use crate::audio::{decode_wav_pcm, generate_beep_pcm, MIXER_RATE_HZ};
+use crate::audio::{canonicalize_float_stereo, decode_wav_pcm, generate_beep_pcm, MIXER_RATE_HZ};
 use crate::{
     AudioClipId, AudioRequest, ButtonState, Capabilities, CapabilityStatus, DrawCommand,
     FrameOutput, InputSnapshot, PadDirection, PhysicalKey, PlayerInputSnapshot, PlayerOneKeyMap,
@@ -360,15 +360,47 @@ impl Canvas2dHost {
     ///
     /// This uses decodeAudioData(), so exported assets can use browser-supported formats
     /// such as WAV, OGG, MP3, or AAC/M4A where the browser supports them.
+    /// Decode RIFF/WAVE with the shared integer parser. For other browser-supported
+    /// formats, decodeAudioData supplies float channels which are quantized and
+    /// resampled to the same canonical 44.1 kHz S16 stereo PCM before registration.
     pub async fn register_audio_bytes(
         &mut self,
         bytes: &[u8],
         volume_percent: i32,
     ) -> Result<AudioClipId, RuntimeError> {
-        if self.audio_context.is_none() {
-            return Err(RuntimeError::Unsupported("WebAudio is unavailable"));
-        }
-        let pcm = decode_wav_pcm(bytes, volume_percent).map_err(RuntimeError::Host)?;
+        let context = self
+            .audio_context
+            .clone()
+            .ok_or(RuntimeError::Unsupported("WebAudio is unavailable"))?;
+        let pcm = match decode_wav_pcm(bytes, volume_percent) {
+            Ok(pcm) => pcm,
+            Err(wav_error) => {
+                let encoded = Uint8Array::from(bytes);
+                let promise = context.decode_audio_data(&encoded.buffer()).map_err(|error| {
+                    RuntimeError::Host(format!(
+                        "WAV decode failed ({wav_error}); browser decodeAudioData also failed: {error:?}"
+                    ))
+                })?;
+                let decoded = JsFuture::from(promise)
+                    .await
+                    .map_err(js_error)?
+                    .dyn_into::<AudioBuffer>()
+                    .map_err(js_error)?;
+                let left = decoded.get_channel_data(0).map_err(js_error)?;
+                let right = if decoded.number_of_channels() > 1 {
+                    decoded.get_channel_data(1).map_err(js_error)?
+                } else {
+                    left.clone()
+                };
+                canonicalize_float_stereo(
+                    &left,
+                    &right,
+                    decoded.sample_rate().round().max(1.0) as u32,
+                    volume_percent,
+                )
+                .map_err(RuntimeError::Host)?
+            }
+        };
         self.register_pcm_samples(pcm)
     }
 
