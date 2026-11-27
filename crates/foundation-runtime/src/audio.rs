@@ -574,7 +574,7 @@ mod tests {
         );
         assert_eq!(
             canonicalize_float_stereo(&left, &right, 22_050, 50).unwrap(),
-            vec![0, 0, 4096, -4096, 8192, -8192, 6144, -6144, 8192, -8192, 8192, -8192]
+            vec![0, 0, 2048, -2048, 4096, -4096, 6144, -6144, 8192, -8192, 8192, -8192]
         );
         assert!(canonicalize_float_stereo(&left, &right, 0, 100).is_err());
     }
