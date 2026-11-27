@@ -1,4 +1,4 @@
-//! Platform-neutral PCM mixer shared by native Foundation hosts.
+//! Canonical WAV decoder and integer PCM mixer shared by native SDL and browser AudioWorklet.
 //!
 //! The mixer is intentionally independent from SDL and operating-system APIs.
 //! It preserves the audio contract needed by Street Chaves: 44.1 kHz S16 stereo,
@@ -455,6 +455,28 @@ mod tests {
             decode_wav_pcm(&wav, 100).unwrap(),
             vec![1000, 1000, 2000, 2000, 3000, 3000, 3000, 3000]
         );
+    }
+
+    #[test]
+    fn decoder_converts_unsigned_eight_bit_pcm_to_signed_sixteen_bit() {
+        assert_eq!(decode_wav_sample(&[0], 0, 1, 8).unwrap(), i16::MIN);
+        assert_eq!(decode_wav_sample(&[128], 0, 1, 8).unwrap(), 0);
+        assert_eq!(decode_wav_sample(&[255], 0, 1, 8).unwrap(), 32_512);
+    }
+
+    #[test]
+    fn decoder_sign_extends_twenty_four_bit_pcm() {
+        assert_eq!(decode_wav_sample(&[0xff, 0xff, 0x7f], 0, 1, 24).unwrap(), i16::MAX);
+        assert_eq!(decode_wav_sample(&[0x00, 0x00, 0x80], 0, 1, 24).unwrap(), i16::MIN);
+        assert_eq!(decode_wav_sample(&[0x00, 0x00, 0x01], 0, 1, 24).unwrap(), 256);
+    }
+
+    #[test]
+    fn decoder_clamps_ieee_float_pcm_and_rounds_to_signed_sixteen_bit() {
+        assert_eq!(decode_wav_sample(&(-1.0_f32).to_le_bytes(), 0, 3, 32).unwrap(), i16::MIN);
+        assert_eq!(decode_wav_sample(&(0.5_f32).to_le_bytes(), 0, 3, 32).unwrap(), 16_384);
+        assert_eq!(decode_wav_sample(&(1.0_f32).to_le_bytes(), 0, 3, 32).unwrap(), i16::MAX);
+        assert_eq!(decode_wav_sample(&(f32::NAN).to_le_bytes(), 0, 3, 32).unwrap(), 0);
     }
 
     #[test]
