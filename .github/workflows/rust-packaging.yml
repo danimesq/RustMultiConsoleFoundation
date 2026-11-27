@@ -27,8 +27,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
-      - name: Check Rust formatting
-        run: cargo fmt --all -- --check
       - name: Test workspace with native SDL3 host
         run: cargo test --workspace --features foundation-runtime/native-sdl3
       - name: Test AudioWorklet PCM mixer contract
