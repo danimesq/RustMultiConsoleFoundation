@@ -365,10 +365,9 @@ impl Canvas2dHost {
         bytes: &[u8],
         volume_percent: i32,
     ) -> Result<AudioClipId, RuntimeError> {
-        let context = self
-            .audio_context
-            .clone()
-            .ok_or(RuntimeError::Unsupported("WebAudio is unavailable"))?;
+        if self.audio_context.is_none() {
+            return Err(RuntimeError::Unsupported("WebAudio is unavailable"));
+        }
         let pcm = decode_wav_pcm(bytes, volume_percent).map_err(RuntimeError::Host)?;
         self.register_pcm_samples(pcm)
     }
@@ -914,12 +913,16 @@ impl Drop for Canvas2dHost {
             self.blur.as_ref().unchecked_ref(),
         );
         if let Some(port) = self.audio_worklet_port.as_ref() {
-            if let Ok(post) = Reflect::get(port, &JsValue::from_str("postMessage"))
-                .and_then(|value| value.dyn_into::<Function>().map_err(|error| error.into()))
-            {
-                let message = Object::new();
-                let _ = Reflect::set(&message, &JsValue::from_str("type"), &JsValue::from_str("stop-all"));
-                let _ = post.call1(port, message.as_ref());
+            if let Ok(post_value) = Reflect::get(port, &JsValue::from_str("postMessage")) {
+                if let Ok(post) = post_value.dyn_into::<Function>() {
+                    let message = Object::new();
+                    let _ = Reflect::set(
+                        &message,
+                        &JsValue::from_str("type"),
+                        &JsValue::from_str("stop-all"),
+                    );
+                    let _ = post.call1(port, message.as_ref());
+                }
             }
         }
         self.stop_all_voices();
