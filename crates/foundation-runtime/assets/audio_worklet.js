@@ -9,11 +9,11 @@ class FoundationPcmMixer extends AudioWorkletProcessor {
     this.samples = new Map();
     this.voices = Array(48).fill(null);
     this.nextSequence = 0;
-    this.sourceFrameIndex = 0;
     this.sourceFrameA = null;
     this.sourceFrameB = null;
     this.outputRate = Math.max(1, Math.round(sampleRate));
     this.sourcePositionRemainder = 0;
+    this.pendingSourceAdvance = 0;
     this.port.onmessage = (event) => this.onMessage(event.data || {});
   }
 
@@ -131,7 +131,13 @@ class FoundationPcmMixer extends AudioWorkletProcessor {
     for (let frame = 0; frame < left.length; frame += 1) {
       if (this.sourceFrameA === null) {
         this.sourceFrameA = this.nextSourceFrame();
-        this.sourceFrameIndex = 0;
+      }
+      // Apply advances lazily at the next output frame. This preserves replay
+      // and stop timing when control messages arrive between process quanta.
+      while (this.pendingSourceAdvance > 0) {
+        this.sourceFrameA = this.sourceFrameB || this.nextSourceFrame();
+        this.sourceFrameB = null;
+        this.pendingSourceAdvance -= 1;
       }
 
       const fraction = this.sourcePositionRemainder / this.outputRate;
@@ -159,16 +165,10 @@ class FoundationPcmMixer extends AudioWorkletProcessor {
       // floating-point phase drift. Shift the cached source frame only after
       // the current interpolated output frame has been written.
       this.sourcePositionRemainder += 44100;
-      let sourceFramesToAdvance = Math.floor(
+      this.pendingSourceAdvance += Math.floor(
         this.sourcePositionRemainder / this.outputRate,
       );
       this.sourcePositionRemainder %= this.outputRate;
-      while (sourceFramesToAdvance > 0) {
-        this.sourceFrameA = this.sourceFrameB || this.nextSourceFrame();
-        this.sourceFrameB = null;
-        this.sourceFrameIndex += 1;
-        sourceFramesToAdvance -= 1;
-      }
     }
     return true;
   }
