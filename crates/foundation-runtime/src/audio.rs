@@ -178,7 +178,12 @@ fn decode_wav_sample(
             let a = i32::from(*data.get(offset).ok_or_else(|| "truncated 24-bit PCM sample".to_owned())?);
             let b = i32::from(*data.get(offset + 1).ok_or_else(|| "truncated 24-bit PCM sample".to_owned())?);
             let c = i32::from(*data.get(offset + 2).ok_or_else(|| "truncated 24-bit PCM sample".to_owned())?);
-            let signed = (a | (b << 8) | (c << 16) << 8) >> 8;
+            let raw = a | (b << 8) | (c << 16);
+            let signed = if raw & 0x0080_0000 != 0 {
+                raw | !0x00ff_ffff
+            } else {
+                raw
+            };
             signed >> 8
         }
         (1, 32) => {
