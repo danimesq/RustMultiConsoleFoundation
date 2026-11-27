@@ -6,6 +6,7 @@ Foundation uses one Rust WAV decoder and one fixed-point PCM mix contract for na
 
 - 44,100 frames per second, signed 16-bit, interleaved stereo PCM.
 - WAV conversion is shared Rust code: PCM 8/16/24/32-bit and IEEE float32, plus WAVE_FORMAT_EXTENSIBLE PCM/float tags with matching valid/container widths.
+- Browser-only formats supported by `decodeAudioData()` (such as OGG, MP3 and AAC where the browser supports them) are retained: decoded Float32 channels are quantized and resampled by shared Rust code into the same canonical PCM before Worklet registration. Native `load_wav` uses the shared RIFF/WAVE parser.
 - Mono is duplicated to stereo. For files with more than two channels, the first two channels are used.
 - Sample-rate conversion uses rational source positions and integer linear interpolation.
 - Volume is clamped to 0..400 percent and applied with integer multiplication/division, truncating toward zero.
