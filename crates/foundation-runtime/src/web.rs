@@ -457,26 +457,166 @@ impl Canvas2dHost {
         self.load_asset_manifest(manifest_url).await
     }
 
-    fn create_beep_buffer(
-        &self,
-        frequency_hz: u32,
-        duration_ms: u32,
-    ) -> Result<AudioBuffer, RuntimeError> {
-        let context = self
-            .audio_context
-            .as_ref()
+    async fn initialize_audio_worklet(&mut self) -> Result<bool, RuntimeError> {
+        let context = self.audio_context.clone()
             .ok_or(RuntimeError::Unsupported("WebAudio is unavailable"))?;
-        let frequency = frequency_hz.clamp(40, 12_000) as f32;
-        let frames = ((44_100_u64 * duration_ms.min(5_000) as u64) / 1_000).max(1) as usize;
-        let mut samples = Vec::with_capacity(frames);
-        for frame in 0..frames {
-            let phase = std::f32::consts::TAU * frequency * frame as f32 / 44_100.0;
-            samples.push(phase.sin() * 0.12);
+        let global = js_sys::global();
+        let worklet = Reflect::get(context.as_ref(), &JsValue::from_str("audioWorklet"))
+            .map_err(js_error)?;
+        if worklet.is_null() || worklet.is_undefined() { return Ok(false); }
+
+        let blob_constructor = Reflect::get(&global, &JsValue::from_str("Blob"))
+            .map_err(js_error)?.dyn_into::<Function>().map_err(js_error)?;
+        let parts = Array::new();
+        parts.push(&JsValue::from_str(include_str!("../assets/audio_worklet.js")));
+        let blob_options = Object::new();
+        Reflect::set(&blob_options, &JsValue::from_str("type"),
+            &JsValue::from_str("application/javascript")).map_err(js_error)?;
+        let blob_args = Array::new();
+        blob_args.push(&parts);
+        blob_args.push(&blob_options);
+        let blob = Reflect::construct(&blob_constructor, &blob_args).map_err(js_error)?;
+
+        let url_constructor = Reflect::get(&global, &JsValue::from_str("URL")).map_err(js_error)?;
+        let create_url = Reflect::get(&url_constructor, &JsValue::from_str("createObjectURL"))
+            .map_err(js_error)?.dyn_into::<Function>().map_err(js_error)?;
+        let module_url = create_url.call1(&url_constructor, &blob).map_err(js_error)?;
+        let add_module = Reflect::get(&worklet, &JsValue::from_str("addModule"))
+            .map_err(js_error)?.dyn_into::<Function>().map_err(js_error)?;
+        let promise = add_module.call1(&worklet, &module_url).map_err(js_error)?
+            .dyn_into::<js_sys::Promise>().map_err(js_error)?;
+        let module_result = JsFuture::from(promise).await.map_err(js_error);
+        if let Ok(revoke) = Reflect::get(&url_constructor, &JsValue::from_str("revokeObjectURL")) {
+            if let Ok(revoke) = revoke.dyn_into::<Function>() {
+                let _ = revoke.call1(&url_constructor, &module_url);
+            }
         }
-        let buffer = context.create_buffer(2, frames as u32, 44_100.0).map_err(js_error)?;
-        buffer.copy_to_channel(&samples, 0).map_err(js_error)?;
-        buffer.copy_to_channel(&samples, 1).map_err(js_error)?;
+        module_result?;
+
+        let node_constructor = Reflect::get(&global, &JsValue::from_str("AudioWorkletNode"))
+            .map_err(js_error)?.dyn_into::<Function>().map_err(js_error)?;
+        let options = Object::new();
+        Reflect::set(&options, &JsValue::from_str("numberOfInputs"), &JsValue::from_f64(0.0))
+            .map_err(js_error)?;
+        Reflect::set(&options, &JsValue::from_str("numberOfOutputs"), &JsValue::from_f64(1.0))
+            .map_err(js_error)?;
+        let output_channels = Array::new();
+        output_channels.push(&JsValue::from_f64(2.0));
+        Reflect::set(&options, &JsValue::from_str("outputChannelCount"), &output_channels)
+            .map_err(js_error)?;
+        Reflect::set(&options, &JsValue::from_str("channelCount"), &JsValue::from_f64(2.0))
+            .map_err(js_error)?;
+        Reflect::set(&options, &JsValue::from_str("channelCountMode"), &JsValue::from_str("explicit"))
+            .map_err(js_error)?;
+
+        let args = Array::new();
+        args.push(context.as_ref());
+        args.push(&JsValue::from_str("foundation-pcm-mixer"));
+        args.push(&options);
+        let node = Reflect::construct(&node_constructor, &args).map_err(js_error)?;
+        let connect = Reflect::get(&node, &JsValue::from_str("connect"))
+            .map_err(js_error)?.dyn_into::<Function>().map_err(js_error)?;
+        let destination = context.destination();
+        connect.call1(&node, destination.as_ref()).map_err(js_error)?;
+        let port = Reflect::get(&node, &JsValue::from_str("port")).map_err(js_error)?;
+        self.audio_worklet_node = Some(node);
+        self.audio_worklet_port = Some(port);
+        Ok(true)
+    }
+
+    fn post_worklet_message(&self, message: &JsValue) -> Result<(), RuntimeError> {
+        let port = self.audio_worklet_port.as_ref()
+            .ok_or_else(|| RuntimeError::Host("AudioWorklet message port is unavailable".to_owned()))?;
+        let post = Reflect::get(port, &JsValue::from_str("postMessage"))
+            .map_err(js_error)?.dyn_into::<Function>().map_err(js_error)?;
+        post.call1(port, message).map_err(js_error)?;
+        Ok(())
+    }
+
+    fn post_worklet_registration(&self, clip: AudioClipId, pcm: &[i16]) -> Result<(), RuntimeError> {
+        let message = Object::new();
+        Reflect::set(&message, &JsValue::from_str("type"), &JsValue::from_str("register"))
+            .map_err(js_error)?;
+        Reflect::set(&message, &JsValue::from_str("clip"),
+            &JsValue::from_str(&clip.0.to_string())).map_err(js_error)?;
+        let samples = Int16Array::from(pcm);
+        Reflect::set(&message, &JsValue::from_str("pcm"), samples.as_ref()).map_err(js_error)?;
+        self.post_worklet_message(message.as_ref())
+    }
+
+    fn create_pcm_audio_buffer(&self, pcm: &[i16]) -> Result<AudioBuffer, RuntimeError> {
+        let context = self.audio_context.as_ref()
+            .ok_or(RuntimeError::Unsupported("WebAudio is unavailable"))?;
+        let frames = (pcm.len() / 2).max(1);
+        let buffer = context.create_buffer(2, frames as u32, MIXER_RATE_HZ as f32).map_err(js_error)?;
+        let mut left = Vec::with_capacity(frames);
+        let mut right = Vec::with_capacity(frames);
+        for frame in 0..frames {
+            left.push(pcm.get(frame * 2).copied().unwrap_or(0) as f32 / 32768.0);
+            right.push(pcm.get(frame * 2 + 1).copied().unwrap_or(0) as f32 / 32768.0);
+        }
+        buffer.copy_to_channel(&left, 0).map_err(js_error)?;
+        buffer.copy_to_channel(&right, 1).map_err(js_error)?;
         Ok(buffer)
+    }
+
+    fn register_pcm_samples(&mut self, pcm: Vec<i16>) -> Result<AudioClipId, RuntimeError> {
+        if pcm.len() < 2 || pcm.len() % 2 != 0 {
+            return Err(RuntimeError::InvalidConfig("audio PCM must contain interleaved stereo frames"));
+        }
+        let buffer = self.create_pcm_audio_buffer(&pcm)?;
+        let id = AudioClipId(self.next_audio_clip_id);
+        self.next_audio_clip_id = self.next_audio_clip_id.saturating_add(1);
+        self.audio_buffers.insert(id, buffer);
+        self.audio_volumes.insert(id, 1.0);
+        self.audio_pcm.insert(id, pcm.clone());
+        if self.audio_worklet_ready { self.post_worklet_registration(id, &pcm)?; }
+        Ok(id)
+    }
+
+    fn dispatch_audio_request(&mut self, request: &AudioRequest) -> Result<(), RuntimeError> {
+        if self.audio_worklet_ready {
+            let message = Object::new();
+            match request {
+                AudioRequest::Beep { .. } => return Err(RuntimeError::Host(
+                    "Beep must be canonicalized before dispatch".to_owned())),
+                AudioRequest::PlayClip { clip, looped } => {
+                    Reflect::set(&message, &JsValue::from_str("type"), &JsValue::from_str("play"))
+                        .map_err(js_error)?;
+                    Reflect::set(&message, &JsValue::from_str("clip"),
+                        &JsValue::from_str(&clip.0.to_string())).map_err(js_error)?;
+                    Reflect::set(&message, &JsValue::from_str("looped"), &JsValue::from_bool(*looped))
+                        .map_err(js_error)?;
+                }
+                AudioRequest::StopClip { clip } => {
+                    Reflect::set(&message, &JsValue::from_str("type"), &JsValue::from_str("stop"))
+                        .map_err(js_error)?;
+                    Reflect::set(&message, &JsValue::from_str("clip"),
+                        &JsValue::from_str(&clip.0.to_string())).map_err(js_error)?;
+                }
+                AudioRequest::StopAll => {
+                    Reflect::set(&message, &JsValue::from_str("type"), &JsValue::from_str("stop-all"))
+                        .map_err(js_error)?;
+                }
+            }
+            return self.post_worklet_message(message.as_ref());
+        }
+        if !self.audio_worklet_attempted {
+            self.pending_audio_requests.push(request.clone());
+            return Ok(());
+        }
+        match request {
+            AudioRequest::Beep { .. } => Err(RuntimeError::Host(
+                "Beep must be canonicalized before dispatch".to_owned())),
+            AudioRequest::PlayClip { clip, looped } => {
+                let buffer = self.audio_buffers.get(clip).cloned().ok_or_else(|| {
+                    RuntimeError::Host(format!("audio clip {} is not loaded", clip.0))
+                })?;
+                self.play_buffer(*clip, buffer, *looped)
+            }
+            AudioRequest::StopClip { clip } => { self.stop_matching_voice(*clip); Ok(()) }
+            AudioRequest::StopAll => { self.stop_all_voices(); Ok(()) }
+        }
     }
 
     fn play_buffer(
@@ -786,6 +926,22 @@ impl Drop for Canvas2dHost {
     }
 }
 
+
+fn create_audio_context() -> Option<AudioContext> {
+    let global = js_sys::global();
+    let preferred = (|| {
+        let constructor = Reflect::get(&global, &JsValue::from_str("AudioContext"))
+            .ok()?.dyn_into::<Function>().ok()?;
+        let options = Object::new();
+        Reflect::set(&options, &JsValue::from_str("sampleRate"),
+            &JsValue::from_f64(f64::from(MIXER_RATE_HZ))).ok()?;
+        let args = Array::new();
+        args.push(&options);
+        Reflect::construct(&constructor, &args).ok()
+            .and_then(|value| value.dyn_into::<AudioContext>().ok())
+    })();
+    preferred.or_else(|| AudioContext::new().ok())
+}
 
 fn decode_image_bytes(bytes: &[u8]) -> Result<RgbaImage, RuntimeError> {
     let decoded = image::load_from_memory(bytes)
