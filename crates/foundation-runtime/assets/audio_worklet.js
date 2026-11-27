@@ -18,7 +18,7 @@ class FoundationPcmMixer extends AudioWorkletProcessor {
   }
 
   onMessage(message) {
-    const clip = Number(message.clip) >>> 0;
+    const clip = String(message.clip);
     switch (message.type) {
       case "register": {
         const input = message.pcm;
