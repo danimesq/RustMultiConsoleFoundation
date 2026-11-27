@@ -4,12 +4,13 @@
 //! WebAudio output. Game code exchanges only Foundation IDs and draw/audio requests.
 //! This adapter intentionally does not include WebGL or SDL.
 
+use crate::audio::{decode_wav_pcm, generate_beep_pcm, MIXER_RATE_HZ};
 use crate::{
     AudioClipId, AudioRequest, ButtonState, Capabilities, CapabilityStatus, DrawCommand,
     FrameOutput, InputSnapshot, PadDirection, PhysicalKey, PlayerInputSnapshot, PlayerOneKeyMap,
     Rect, RgbaImage, RuntimeConfig, RuntimeError, RuntimeHost, TextureId,
 };
-use js_sys::{ArrayBuffer, Function, Reflect, Uint8Array};
+use js_sys::{Array, ArrayBuffer, Function, Int16Array, Object, Reflect, Uint8Array};
 use crate::web_export::{validate_web_export_path, WebAssetKind, WebExportManifest};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -76,7 +77,13 @@ pub struct Canvas2dHost {
     audio_context: Option<AudioContext>,
     audio_buffers: HashMap<AudioClipId, AudioBuffer>,
     audio_volumes: HashMap<AudioClipId, f32>,
+    audio_pcm: HashMap<AudioClipId, Vec<i16>>,
     active_voices: Vec<ActiveVoice>,
+    audio_worklet_node: Option<JsValue>,
+    audio_worklet_port: Option<JsValue>,
+    audio_worklet_attempted: bool,
+    audio_worklet_ready: bool,
+    pending_audio_requests: Vec<AudioRequest>,
     next_texture_id: u64,
     next_audio_clip_id: u64,
     next_voice_sequence: u64,
@@ -112,7 +119,7 @@ impl Canvas2dHost {
         context.set_image_smoothing_enabled(!config.pixel_art);
 
         // Audio is optional; an unavailable device must not prevent the game from starting.
-        let audio_context = AudioContext::new().ok();
+        let audio_context = create_audio_context();
         let input = Rc::new(RefCell::new(BrowserInput::default()));
 
         let down_state = Rc::clone(&input);
@@ -191,7 +198,13 @@ impl Canvas2dHost {
             audio_context,
             audio_buffers: HashMap::new(),
             audio_volumes: HashMap::new(),
+            audio_pcm: HashMap::new(),
             active_voices: Vec::new(),
+            audio_worklet_node: None,
+            audio_worklet_port: None,
+            audio_worklet_attempted: false,
+            audio_worklet_ready: false,
+            pending_audio_requests: Vec::new(),
             next_texture_id: 1,
             next_audio_clip_id: 1,
             next_voice_sequence: 1,
@@ -241,15 +254,42 @@ impl Canvas2dHost {
     }
 
     /// Resume suspended audio. Call this from a click/tap handler.
-    pub async fn resume_audio(&self) -> Result<(), RuntimeError> {
+    pub async fn resume_audio(&mut self) -> Result<(), RuntimeError> {
         let context = self
             .audio_context
-            .as_ref()
+            .clone()
             .ok_or(RuntimeError::Unsupported("WebAudio is unavailable"))?;
         JsFuture::from(context.resume().map_err(js_error)?)
             .await
             .map_err(js_error)?;
+
+        if !self.audio_worklet_attempted {
+            self.audio_worklet_attempted = true;
+            self.audio_worklet_ready = self.initialize_audio_worklet().await.unwrap_or(false);
+            if self.audio_worklet_ready {
+                let registered = self.audio_pcm.iter()
+                    .map(|(clip, pcm)| (*clip, pcm.clone()))
+                    .collect::<Vec<_>>();
+                for (clip, pcm) in registered {
+                    self.post_worklet_registration(clip, &pcm)?;
+                }
+            }
+            let pending = std::mem::take(&mut self.pending_audio_requests);
+            for request in pending {
+                self.dispatch_audio_request(&request)?;
+            }
+        }
         Ok(())
+    }
+
+    pub fn audio_backend(&self) -> &'static str {
+        if self.audio_worklet_ready {
+            "AudioWorklet deterministic S16 PCM mixer"
+        } else if self.audio_worklet_attempted {
+            "WebAudio AudioBuffer fallback"
+        } else {
+            "WebAudio awaiting user gesture"
+        }
     }
 
     /// Upload RGBA pixels into an offscreen browser canvas and return a stable texture ID.
@@ -329,22 +369,8 @@ impl Canvas2dHost {
             .audio_context
             .clone()
             .ok_or(RuntimeError::Unsupported("WebAudio is unavailable"))?;
-        let encoded = Uint8Array::from(bytes);
-        let promise = context
-            .decode_audio_data(&encoded.buffer())
-            .map_err(js_error)?;
-        let decoded = JsFuture::from(promise)
-            .await
-            .map_err(js_error)?
-            .dyn_into::<AudioBuffer>()
-            .map_err(js_error)?;
-
-        let id = AudioClipId(self.next_audio_clip_id);
-        self.next_audio_clip_id = self.next_audio_clip_id.saturating_add(1);
-        self.audio_buffers.insert(id, decoded);
-        self.audio_volumes
-            .insert(id, volume_percent.clamp(0, 400) as f32 / 100.0);
-        Ok(id)
+        let pcm = decode_wav_pcm(bytes, volume_percent).map_err(RuntimeError::Host)?;
+        self.register_pcm_samples(pcm)
     }
 
     /// Fetch and decode a browser-supported audio file from a web package URL.
@@ -716,25 +742,19 @@ impl RuntimeHost for Canvas2dHost {
     fn audio(&mut self, request: &AudioRequest) -> Result<(), RuntimeError> {
         match request {
             AudioRequest::Beep { frequency_hz, duration_ms } => {
-                let buffer = self.create_beep_buffer(*frequency_hz, *duration_ms)?;
-                let ephemeral_id = AudioClipId(self.next_audio_clip_id);
-                self.next_audio_clip_id = self.next_audio_clip_id.saturating_add(1);
-                self.play_buffer(ephemeral_id, buffer, false)
+                let clip = self.register_pcm_samples(generate_beep_pcm(*frequency_hz, *duration_ms))?;
+                self.dispatch_audio_request(&AudioRequest::PlayClip { clip, looped: false })
             }
             AudioRequest::PlayClip { clip, looped } => {
-                let buffer = self.audio_buffers.get(clip).cloned().ok_or_else(|| {
-                    RuntimeError::Host(format!("audio clip {} is not loaded", clip.0))
-                })?;
-                self.play_buffer(*clip, buffer, *looped)
+                if !self.audio_pcm.contains_key(clip) {
+                    return Err(RuntimeError::Host(format!("audio clip {} is not loaded", clip.0)));
+                }
+                self.dispatch_audio_request(&AudioRequest::PlayClip { clip: *clip, looped: *looped })
             }
             AudioRequest::StopClip { clip } => {
-                self.stop_matching_voice(*clip);
-                Ok(())
+                self.dispatch_audio_request(&AudioRequest::StopClip { clip: *clip })
             }
-            AudioRequest::StopAll => {
-                self.stop_all_voices();
-                Ok(())
-            }
+            AudioRequest::StopAll => self.dispatch_audio_request(&AudioRequest::StopAll),
         }
     }
 }
@@ -753,6 +773,15 @@ impl Drop for Canvas2dHost {
             "blur",
             self.blur.as_ref().unchecked_ref(),
         );
+        if let Some(port) = self.audio_worklet_port.as_ref() {
+            if let Ok(post) = Reflect::get(port, &JsValue::from_str("postMessage"))
+                .and_then(|value| value.dyn_into::<Function>().map_err(|error| error.into()))
+            {
+                let message = Object::new();
+                let _ = Reflect::set(&message, &JsValue::from_str("type"), &JsValue::from_str("stop-all"));
+                let _ = post.call1(port, message.as_ref());
+            }
+        }
         self.stop_all_voices();
     }
 }
