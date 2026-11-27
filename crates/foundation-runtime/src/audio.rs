@@ -222,6 +222,83 @@ fn read_i32(bytes: &[u8], offset: usize) -> Result<i32, String> {
     Ok(i32::from_le_bytes([slice[0], slice[1], slice[2], slice[3]]))
 }
 
+
+/// Convert browser-decoded channel data into the same canonical S16 stereo stream.
+/// This is used only for formats that the Rust RIFF/WAVE decoder does not accept
+/// (for example OGG/MP3/AAC); WAV remains on the exact shared RIFF path above.
+pub fn canonicalize_float_stereo(
+    left: &[f32],
+    right: &[f32],
+    source_rate_hz: u32,
+    volume_percent: i32,
+) -> Result<Vec<i16>, String> {
+    if source_rate_hz == 0 {
+        return Err("decoded audio sample rate must be non-zero".to_owned());
+    }
+    let source_frames = left.len().min(right.len());
+    if source_frames == 0 {
+        return Err("decoded audio contains no sample frames".to_owned());
+    }
+    let mut source = Vec::with_capacity(source_frames.saturating_mul(MIXER_CHANNELS));
+    for frame in 0..source_frames {
+        source.push(float_to_s16(left[frame]));
+        source.push(float_to_s16(right[frame]));
+    }
+    let frames_u64 = u64::try_from(source_frames)
+        .map_err(|_| "decoded audio frame count exceeds the supported range".to_owned())?;
+    let output_frames = frames_u64
+        .checked_mul(u64::from(MIXER_RATE_HZ))
+        .ok_or_else(|| "decoded audio resampled frame count overflow".to_owned())?
+        / u64::from(source_rate_hz);
+    let output_frames = usize::try_from(output_frames.max(1))
+        .map_err(|_| "decoded audio resampled frame count exceeds the supported range".to_owned())?;
+
+    let mut output = Vec::with_capacity(output_frames.saturating_mul(MIXER_CHANNELS));
+    for frame in 0..output_frames {
+        if source_rate_hz == MIXER_RATE_HZ {
+            let offset = frame.min(source_frames - 1) * MIXER_CHANNELS;
+            output.extend_from_slice(&source[offset..offset + MIXER_CHANNELS]);
+            continue;
+        }
+        let numerator = (frame as u64)
+            .checked_mul(u64::from(source_rate_hz))
+            .ok_or_else(|| "decoded audio resampling position overflow".to_owned())?;
+        let first_frame = (numerator / u64::from(MIXER_RATE_HZ)) as usize;
+        let remainder = (numerator % u64::from(MIXER_RATE_HZ)) as i64;
+        let next_frame = (first_frame + 1).min(source_frames - 1);
+        let first = first_frame.min(source_frames - 1) * MIXER_CHANNELS;
+        let next = next_frame * MIXER_CHANNELS;
+        for channel in 0..MIXER_CHANNELS {
+            let a = i64::from(source[first + channel]);
+            let b = i64::from(source[next + channel]);
+            let weighted = a * (i64::from(MIXER_RATE_HZ) - remainder) + b * remainder;
+            output.push((weighted / i64::from(MIXER_RATE_HZ)) as i16);
+        }
+    }
+
+    let volume = volume_percent.clamp(0, 400);
+    if volume != 100 {
+        for sample in &mut output {
+            let scaled = (i32::from(*sample) * volume) / 100;
+            *sample = scaled.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16;
+        }
+    }
+    Ok(output)
+}
+
+fn float_to_s16(sample: f32) -> i16 {
+    let value = if !sample.is_finite() {
+        0
+    } else if sample <= -1.0 {
+        i32::from(i16::MIN)
+    } else if sample >= 1.0 {
+        i32::from(i16::MAX)
+    } else {
+        (sample * 32768.0).round() as i32
+    };
+    value.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16
+}
+
 /// Produce the same diagnostic tone PCM on native SDL and the browser worklet.
 pub fn generate_beep_pcm(frequency_hz: u32, duration_ms: u32) -> Vec<i16> {
     let frequency = f64::from(frequency_hz.clamp(40, 12_000));
@@ -485,6 +562,21 @@ mod tests {
         let mut wav = make_pcm16_wav(44_100, 2, &[[1, 2]]);
         wav.truncate(30);
         assert!(decode_wav_pcm(&wav, 100).is_err());
+    }
+
+    #[test]
+    fn browser_decoded_float_stereo_is_quantized_and_resampled_to_canonical_pcm() {
+        let left = [0.0_f32, 0.25, 0.5];
+        let right = [0.0_f32, -0.25, -0.5];
+        assert_eq!(
+            canonicalize_float_stereo(&left, &right, 44_100, 100).unwrap(),
+            vec![0, 0, 8192, -8192, 16_384, -16_384]
+        );
+        assert_eq!(
+            canonicalize_float_stereo(&left, &right, 22_050, 50).unwrap(),
+            vec![0, 0, 2048, -2048, 4096, -4096, 4096, -4096]
+        );
+        assert!(canonicalize_float_stereo(&left, &right, 0, 100).is_err());
     }
 
     #[test]
