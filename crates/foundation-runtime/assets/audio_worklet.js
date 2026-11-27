@@ -12,8 +12,8 @@ class FoundationPcmMixer extends AudioWorkletProcessor {
     this.sourceFrameIndex = 0;
     this.sourceFrameA = null;
     this.sourceFrameB = null;
-    this.sourcePosition = 0;
-    this.sourceStep = 44100 / sampleRate;
+    this.outputRate = Math.max(1, Math.round(sampleRate));
+    this.sourcePositionRemainder = 0;
     this.port.onmessage = (event) => this.onMessage(event.data || {});
   }
 
@@ -134,14 +134,7 @@ class FoundationPcmMixer extends AudioWorkletProcessor {
         this.sourceFrameIndex = 0;
       }
 
-      const lower = Math.floor(this.sourcePosition);
-      while (lower > this.sourceFrameIndex) {
-        this.sourceFrameA = this.sourceFrameB || this.nextSourceFrame();
-        this.sourceFrameB = null;
-        this.sourceFrameIndex += 1;
-      }
-
-      const fraction = this.sourcePosition - this.sourceFrameIndex;
+      const fraction = this.sourcePositionRemainder / this.outputRate;
       if (fraction > 0 && this.sourceFrameB === null) {
         this.sourceFrameB = this.nextSourceFrame();
       }
@@ -162,7 +155,20 @@ class FoundationPcmMixer extends AudioWorkletProcessor {
         }
       }
 
-      this.sourcePosition += this.sourceStep;
+      // Rational 44.1 kHz -> device-rate stepping avoids long-session
+      // floating-point phase drift. Shift the cached source frame only after
+      // the current interpolated output frame has been written.
+      this.sourcePositionRemainder += 44100;
+      let sourceFramesToAdvance = Math.floor(
+        this.sourcePositionRemainder / this.outputRate,
+      );
+      this.sourcePositionRemainder %= this.outputRate;
+      while (sourceFramesToAdvance > 0) {
+        this.sourceFrameA = this.sourceFrameB || this.nextSourceFrame();
+        this.sourceFrameB = null;
+        this.sourceFrameIndex += 1;
+        sourceFramesToAdvance -= 1;
+      }
     }
     return true;
   }
