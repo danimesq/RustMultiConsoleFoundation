@@ -1,6 +1,6 @@
 //! Concrete native SDL3 host for Foundation game consumers.
 //!
-//! SDL owns the window, event queue, textures, WAV decoding and audio device here.
+//! SDL owns the window, event queue, textures and audio device; WAV decoding is shared Rust code.
 //! Consumers exchange only Foundation-owned IDs, input snapshots and draw/audio commands.
 
 use crate::audio::{decode_wav_pcm, generate_beep_pcm, AudioMixer, SampleId, MIXER_CHANNELS, MIXER_RATE_HZ};
